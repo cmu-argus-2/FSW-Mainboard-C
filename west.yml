@@ -1,0 +1,24 @@
+# West manifest: pins the Zephyr version and the modules this project uses.
+# Set up a workspace with:
+#   west init -m https://github.com/cmu-argus-2/FSW-Mainboard-C --mr main <workspace-dir>
+#   cd <workspace-dir> && west update
+
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: 839728050444f90d06870b5fc9bbbda106d91459
+      import:
+        name-allowlist:
+          - cmsis_6       # Cortex-M33 core support
+          - hal_rpi_pico  # RP2350 drivers
+          - fatfs         # SD card filesystem
+          - littlefs      # on-board flash storage
+          - loramac-node  # SX1262 radio backend
+
+  self:
+    path: FSW-Mainboard-C

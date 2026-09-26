@@ -1,0 +1,16 @@
+board:
+  name: argus
+  full_name: CMU Argus Mainboard
+  revision:
+    # Mainboard hardware version. Each new version gets an entry here plus an
+    # argus_rp2350b_m33_0_<N>.overlay holding only what changed from the base
+    # files (which describe version 4).
+    format: number
+    default: "4"
+    # Building for a revision not listed here is an error, instead of silently
+    # falling back to an older revision's pins.
+    exact: true
+    revisions:
+      - name: "4"
+  socs:
+    - name: rp2350b
