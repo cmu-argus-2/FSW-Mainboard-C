@@ -1,0 +1,18 @@
+identifier: argus/rp2350b/m33_0
+name: CMU Argus Mainboard (Cortex-M33)
+type: mcu
+arch: arm
+flash: 4096
+ram: 520
+toolchain:
+  - zephyr
+supported:
+  - gpio
+  - i2c
+  - spi
+  - uart
+  - usbd
+  - watchdog
+  - led_strip
+  - lora
+  - sdhc

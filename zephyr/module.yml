@@ -1,0 +1,4 @@
+# Registers this repo as a Zephyr module so boards/ is found automatically.
+build:
+  settings:
+    board_root: .

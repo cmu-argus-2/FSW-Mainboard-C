@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_ARGUS
+
+config USB_SELF_POWERED
+	default n
+
+# Needed to turn on the peripheral 3.3V rail (periph_3v3).
+config REGULATOR
+	default y
+
+# Console and shell go over USB CDC ACM, like CircuitPython's REPL does.
+source "boards/common/usb/Kconfig.cdc_acm_serial.defconfig"
+
+endif # BOARD_ARGUS
