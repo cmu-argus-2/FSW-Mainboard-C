@@ -1,0 +1,18 @@
+# MAX17205 fuel gauge. Driven by the application (src/drivers/max17205.c),
+# not by an in-tree Zephyr driver; this binding only exists so the app can get
+# the gauge's bus and address with I2C_DT_SPEC_GET().
+#
+# reg is the main register block (0x36). The shadow RAM at 0x0B is fixed by
+# the chip, so the driver derives it rather than taking it from here.
+
+description: Maxim MAX17205 multi-cell ModelGauge m5 fuel gauge
+
+compatible: "maxim,max17205"
+
+properties:
+  rsense-micro-ohms:
+    type: int
+    required: true
+    description: Current-sense resistor value in micro-ohms.
+
+include: i2c-device.yaml

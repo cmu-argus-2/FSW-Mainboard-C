@@ -3,7 +3,7 @@
  * @brief Unity unit tests for src/drivers/max17205.c.
  *
  * These run on the host, not on the RP2350. The driver is linked against the
- * fake i2c_bus in fakes/, which models the gauge as a register map, so each
+ * fake Zephyr I2C API in fakes/, which models the gauge as a register map, so each
  * test stages a register value, calls the driver, and checks what came back.
  *
  * One test per function in max17205.h. Each read test also checks that the
@@ -16,10 +16,9 @@
 
 #include "unity.h"
 
-#include "argus/i2c_bus.h"
 #include "argus/drivers/max17205.h"
 
-#include "i2c_bus_fake.h"
+#include "i2c_fake.h"
 
 #include <string.h>
 
@@ -86,9 +85,8 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-    /* Nothing may leave the bus locked, whatever path the driver took. */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, i2c_fake.lock_depth,
-                                  "driver returned while still holding the bus lock");
+    /* Nothing to check: Zephyr's I2C driver owns bus locking, so the driver
+     * cannot leave the bus held. */
 }
 
 /**
@@ -100,17 +98,17 @@ void tearDown(void) {
 static max17205_t make_ready_dev(void) {
     max17205_t dev;
     memset(&dev, 0, sizeof(dev));
-    dev.main.bus = i2c_fake_ready_bus();
-    dev.main.addr = GAUGE_MAIN;
-    dev.shadow.bus = i2c_fake_ready_bus();
-    dev.shadow.addr = GAUGE_SHADOW;
+    dev.main = i2c_fake_spec(GAUGE_MAIN);
+    dev.shadow = i2c_fake_spec(GAUGE_SHADOW);
     dev.init = true;
     return dev;
 }
 
-/** A bus that has been brought up. */
-static i2c_bus_t *make_ready_bus(void) {
-    return i2c_fake_ready_bus();
+/** The gauge's spec, as I2C_DT_SPEC_GET(DT_NODELABEL(fuel_gauge)) gives it on target. */
+static const struct i2c_dt_spec *make_gauge_spec(void) {
+    static struct i2c_dt_spec spec;
+    spec = i2c_fake_spec(GAUGE_MAIN);
+    return &spec;
 }
 
 /** 
@@ -119,7 +117,7 @@ static i2c_bus_t *make_ready_bus(void) {
  * 
  * */
 void test_max17205_init_rejects_null_dev(void) {
-    TEST_ASSERT_EQUAL_INT(max17205_arg_err, max17205_init(NULL, make_ready_bus()));
+    TEST_ASSERT_EQUAL_INT(max17205_arg_err, max17205_init(NULL, make_gauge_spec()));
 }
 
 void test_max17205_init_rejects_null_bus(void) {

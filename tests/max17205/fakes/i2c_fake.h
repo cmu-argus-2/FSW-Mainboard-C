@@ -1,11 +1,10 @@
 /**
- * @file i2c_bus_fake.h
- * @brief Fake implementation of argus/i2c_bus.h, for testing drivers on top of it.
+ * @file i2c_fake.h
+ * @brief Fake of Zephyr's I2C API (fakes/zephyr/drivers/i2c.h), for testing drivers on top of it.
  *
- * max17205.c's dependency is the i2c_bus API, not the Pico SDK, so that is
- * where these tests cut. Linking the driver against this fake instead of
- * src/board/i2c_bus.c means a max17205 test failure can only be a max17205
- * bug -- i2c_bus.c has its own suite in tests/i2c_bus/.
+ * max17205.c's dependency is <zephyr/drivers/i2c.h>, so that is where these
+ * tests cut: the driver is compiled for the host against this fake instead of
+ * a real Zephyr bus driver.
  *
  * The fake does two things at once:
  *
@@ -29,15 +28,14 @@
  *         TEST_ASSERT_EQUAL_INT(0, i2c_fake_find_reg_read(0x36, 0x06) < 0);
  *     }
  *
- * Argument validation mirrors src/board/i2c_bus.c exactly (NULL checks, the
- * 0x08-0x77 address window, bus/device init flags), so a driver that passes a
- * bad argument gets the same status code here as it would on hardware.
+ * Status codes are Zephyr's: 0, or a negative errno. A transfer to an address
+ * nobody answers at returns -EIO, as the real controller drivers do on a NACK.
  */
 
-#ifndef I2C_BUS_FAKE_H
-#define I2C_BUS_FAKE_H
+#ifndef I2C_FAKE_H
+#define I2C_FAKE_H
 
-#include "argus/i2c_bus.h"
+#include <zephyr/drivers/i2c.h>
 
 /** Recorded transfers kept before the log stops growing (counters keep going). */
 #define I2C_FAKE_MAX_EVENTS 64
@@ -56,50 +54,34 @@ typedef enum {
     i2c_fake_op_write_read,
 } i2c_fake_op_t;
 
-/** One i2c_read / i2c_write / ic2_write_read call. */
+/** One transfer (any of the i2c_*_dt() calls). */
 typedef struct {
-    i2c_fake_op_t op;
-    i2c_bus_t    *bus;
-    uint8_t       addr;      /* 7-bit address of the target device */
-    uint8_t       reg;       /* register pointer this transfer acted on */
-    bool          reg_valid; /* false for a bare read with no pointer ever set */
-    uint8_t       w[I2C_FAKE_MAX_BYTES];
-    size_t        w_len;     /* length the caller asked for, even if truncated above */
-    uint8_t       r[I2C_FAKE_MAX_BYTES];
-    size_t        r_len;
-    i2c_status_t  ret;       /* what the fake returned */
+    i2c_fake_op_t        op;
+    const struct device *bus;
+    uint8_t              addr;      /* 7-bit address of the target device */
+    uint8_t              reg;       /* register pointer this transfer acted on */
+    bool                 reg_valid; /* false for a bare read with no pointer ever set */
+    uint8_t              w[I2C_FAKE_MAX_BYTES];
+    size_t               w_len;     /* length the caller asked for, even if truncated above */
+    uint8_t              r[I2C_FAKE_MAX_BYTES];
+    size_t               r_len;
+    int                  ret;       /* what the fake returned */
 } i2c_fake_xfer_t;
 
 /** A register-map device sitting at one address. */
 typedef struct {
-    bool         used;
-    uint8_t      addr;
-    uint16_t     reg[I2C_FAKE_REGS];
-    i2c_status_t reg_status[I2C_FAKE_REGS]; /* i2c_ok unless a failure was injected */
-    uint8_t      ptr;                       /* register pointer, as last written */
-    bool         ptr_valid;
+    bool     used;
+    uint8_t  addr;
+    uint16_t reg[I2C_FAKE_REGS];
+    int      reg_status[I2C_FAKE_REGS]; /* 0 unless a failure was injected */
+    uint8_t  ptr;                       /* register pointer, as last written */
+    bool     ptr_valid;
 } i2c_fake_device_t;
 
 typedef struct {
-    /* --- bus lifecycle --- */
-    unsigned bus_init_calls;
-    unsigned bus_deinit_calls;
-    unsigned bus_recover_calls;
-    unsigned set_baud_calls;
-    unsigned set_mode_calls;
-    bool     set_mode_slave;   /* argument of the last i2c_set_mode() */
-    unsigned scan_bus_calls;
-
-    /* --- locking. depth should be back to 0 after any driver call returns --- */
-    unsigned lock_calls;
-    unsigned unlock_calls;
-    int      lock_depth;
-    /** When true, i2c_bus_lock() reports i2c_busy. */
-    bool     lock_contended;
-
-    /* --- device bring-up --- */
-    unsigned device_init_calls;
-    uint8_t  device_init_addr[I2C_FAKE_MAX_EVENTS]; /* in call order */
+    /** What i2c_is_ready_dt() reports for the fake bus. True after reset. */
+    bool     bus_ready;
+    unsigned is_ready_calls;
 
     /* --- transfers --- */
     unsigned        xfer_calls;    /* total, including any beyond the log */
@@ -112,10 +94,10 @@ typedef struct {
     i2c_fake_device_t dev[I2C_FAKE_MAX_DEVICES];
 
     /* --- failure injection (see the helpers below) --- */
-    i2c_status_t forced;          /* i2c_ok = off; anything else fails every transfer */
-    bool         fail_after_armed;
-    unsigned     fail_after_remaining;
-    i2c_status_t fail_after_status;
+    int      forced;          /* 0 = off; anything else fails every transfer */
+    bool     fail_after_armed;
+    unsigned fail_after_remaining;
+    int      fail_after_status;
 
     /** Byte returned for a read of a register on a device with no map entry.
      *  Registers all start at 0, so this only shows up past the 256-register
@@ -128,27 +110,29 @@ extern i2c_fake_t i2c_fake;
 /** Clear every recorded call, device and injected failure. Call from setUp(). */
 void i2c_fake_reset(void);
 
-/** A bus in the state a successful i2c_bus_init() leaves it in.
- *  Points at static storage that i2c_fake_reset() re-initialises. */
-i2c_bus_t *i2c_fake_ready_bus(void);
+/** The fake I2C controller, i.e. what DEVICE_DT_GET(DT_NODELABEL(i2c1)) is on target. */
+const struct device *i2c_fake_bus(void);
+
+/** An i2c_dt_spec on the fake bus at `addr`, as I2C_DT_SPEC_GET() would give. */
+struct i2c_dt_spec i2c_fake_spec(uint8_t addr);
 
 /** Put a register-map device on the bus at `addr` (or take it off again).
- *  A transfer to an absent address returns i2c_nack_err. */
+ *  A transfer to an absent address returns -EIO. */
 void i2c_fake_set_present(uint8_t addr, bool present);
 
 /** Set/get one 16-bit register. Setting implies the device is present. */
 void     i2c_fake_set_reg(uint8_t addr, uint8_t reg, uint16_t value);
 uint16_t i2c_fake_get_reg(uint8_t addr, uint8_t reg);
 
-/** Every transfer returns `st`. Pass i2c_ok to turn it back off. */
-void i2c_fake_fail_all(i2c_status_t st);
+/** Every transfer returns `err` (a negative errno). Pass 0 to turn it back off. */
+void i2c_fake_fail_all(int err);
 
-/** The next `n_ok` transfers succeed; every one after that returns `st`.
+/** The next `n_ok` transfers succeed; every one after that returns `err`.
  *  Useful for "read_all gives up partway through" cases. */
-void i2c_fake_fail_after(unsigned n_ok, i2c_status_t st);
+void i2c_fake_fail_after(unsigned n_ok, int err);
 
-/** Only accesses to this one register fail, with `st`. i2c_ok clears it. */
-void i2c_fake_fail_reg(uint8_t addr, uint8_t reg, i2c_status_t st);
+/** Only accesses to this one register fail, with `err`. 0 clears it. */
+void i2c_fake_fail_reg(uint8_t addr, uint8_t reg, int err);
 
 /** Most recent recorded transfer, or NULL if there were none. */
 const i2c_fake_xfer_t *i2c_fake_last_xfer(void);
@@ -160,4 +144,4 @@ int i2c_fake_find_reg_read(uint8_t addr, uint8_t reg);
 /** Index of the first transfer that wrote `value` to `reg` on `addr`, or -1. */
 int i2c_fake_find_reg_write(uint8_t addr, uint8_t reg, uint16_t value);
 
-#endif /* I2C_BUS_FAKE_H */
+#endif /* I2C_FAKE_H */

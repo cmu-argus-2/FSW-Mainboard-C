@@ -4,11 +4,13 @@ cmake_minimum_required(VERSION 3.20.0)
 # Pick a revision explicitly with e.g. `west build -b argus@4/rp2350b/m33_0`.
 set(BOARD argus/rp2350b/m33_0)
 
+list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(FSW-Mainboard-C)
 
 target_sources(app PRIVATE
         src/main.c
+        src/drivers/max17205.c
 )
 
 target_include_directories(app PRIVATE

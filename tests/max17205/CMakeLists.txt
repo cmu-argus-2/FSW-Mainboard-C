@@ -1,17 +1,15 @@
 # Host-side unit tests for src/drivers/max17205.c.
 #
-# Standalone CMake project, same shape as tests/i2c_bus: no Pico SDK, no cross
+# Standalone CMake project, same shape as tests/i2c_bus: no Zephyr, no cross
 # toolchain, plain host compiler.
 #
 #   cmake -S tests/max17205 -B build/tests/max17205
 #   cmake --build build/tests/max17205
 #   ctest --test-dir build/tests/max17205 --output-on-failure
 #
-# The cut is one layer higher than the i2c_bus suite: max17205.c is linked
-# against fakes/i2c_bus_fake.c rather than src/board/i2c_bus.c, so a failure
-# here is a driver bug and never an i2c_bus bug. The Pico SDK headers still
-# have to resolve (argus/i2c_bus.h includes them), so the stubs from
-# tests/i2c_bus/fakes are reused for those -- no second copy to keep in step.
+# max17205.c is compiled against fakes/zephyr/drivers/i2c.h and linked
+# against fakes/i2c_fake.c, a register-map model of the gauge behind Zephyr's
+# I2C API, so a failure here is a driver bug and never a bus bug.
 #
 # Requires the Unity submodule at <repo>/unity:
 #   git submodule update --init --recursive
@@ -52,25 +50,18 @@ if(NOT TARGET unity)
     target_compile_definitions(unity PUBLIC UNITY_USE_COMMAND_LINE_ARGS)
 endif()
 
-# The fake i2c_bus, plus the SDK header stubs it and max17205.h need.
-#
-# Include order matters: fakes/ here supplies pico/float.h (which max17205.h
-# includes and the i2c_bus suite never needed); tests/i2c_bus/fakes supplies
-# hardware/i2c.h, pico/sync.h, pico/stdlib.h and pico/binary_info.h.
-add_library(i2c_bus_fake STATIC
-    fakes/i2c_bus_fake.c
-    "${I2C_BUS_TEST_DIR}/fakes/pico_fake.c"   # only for the i2c0/i2c1 instances
-)
-target_include_directories(i2c_bus_fake PUBLIC
+# The fake Zephyr I2C API. fakes/ supplies <zephyr/drivers/i2c.h>, which is
+# the only Zephyr header max17205.h includes.
+add_library(i2c_fake STATIC fakes/i2c_fake.c)
+target_include_directories(i2c_fake PUBLIC
     "${CMAKE_CURRENT_LIST_DIR}/fakes"
-    "${I2C_BUS_TEST_DIR}/fakes"
     "${REPO_ROOT}/include"
 )
-target_compile_options(i2c_bus_fake PRIVATE -Wall -Wextra)
+target_compile_options(i2c_fake PRIVATE -Wall -Wextra)
 
 # The code under test, compiled for the host against the fake bus.
 add_library(max17205_uut STATIC "${REPO_ROOT}/src/drivers/max17205.c")
-target_link_libraries(max17205_uut PUBLIC i2c_bus_fake)
+target_link_libraries(max17205_uut PUBLIC i2c_fake)
 # Warnings on but not fatal: the driver is still a stub and -Werror would turn
 # every unused parameter into a build break instead of a failing test.
 target_compile_options(max17205_uut PRIVATE -Wall -Wextra -Wno-unused-parameter)
