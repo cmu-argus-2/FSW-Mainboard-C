@@ -195,6 +195,14 @@ gpio0_lo: &gpio0 {
 			status = "okay";
 		};
 	};
+
+	/* Battery board fuel gauge. Shadow RAM answers at 0x0B too (see binding). */
+	fuel_gauge: max17205@36 {
+      compatible = "maxim,max17205";
+      reg = <0x36>;
+      rsense-micro-ohms = <10000>;   /* check the schematic */
+      status = "okay";
+	};
 };
 
 &spi0 {
