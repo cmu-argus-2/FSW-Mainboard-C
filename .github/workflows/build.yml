@@ -1,5 +1,6 @@
 # Builds the firmware on each push to main and on every pull request, and
 # uploads the resulting zephyr.uf2 as an artifact.
+# Also runs every test under tests/ on native_sim.
 
 name: Build
 
@@ -60,3 +61,26 @@ jobs:
           name: argus-${{ matrix.revision }}-${{ github.sha }}
           path: FSW-Mainboard-C/build/argus-${{ matrix.revision }}/zephyr/zephyr.uf2
           if-no-files-found: error
+
+  # Twister finds every testcase.yaml under tests/, builds each one as a Linux
+  # executable (native_sim), runs it, and fails the job if any test fails.
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: FSW-Mainboard-C
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The tests build with the runner's own gcc; the action just requires a
+      # toolchain to be named.
+      - uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: FSW-Mainboard-C
+          toolchains: arm-zephyr-eabi
+
+      - name: Run tests
+        run: west twister -T FSW-Mainboard-C/tests -p native_sim/native/64 -v --inline-logs
