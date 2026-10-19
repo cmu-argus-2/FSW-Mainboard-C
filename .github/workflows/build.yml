@@ -1,0 +1,62 @@
+# Builds the firmware on each push to main and on every pull request, and
+# uploads the resulting zephyr.uf2 as an artifact.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch/PR cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Read the board revision(s) to build from board.yml.
+  revisions:
+    runs-on: ubuntu-24.04
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: echo "list=$(yq -o=json -I=0 '[.board.revision.revisions[].name]' boards/cmu/argus/board.yml)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: revisions
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: ${{ fromJSON(needs.revisions.outputs.list) }}
+    steps:
+      # The west workspace is the job's root folder, with this repo checked out
+      # into FSW-Mainboard-C/ next to zephyr/ and modules/, like a local setup.
+      - uses: actions/checkout@v7
+        with:
+          path: FSW-Mainboard-C
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Installs west, runs `west update` on our west.yml, and installs (and
+      # caches) the Zephyr SDK version that Zephyr revision expects.
+      - uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: FSW-Mainboard-C
+          toolchains: arm-zephyr-eabi
+          ccache-cache-key: argus-${{ matrix.revision }}
+
+      - name: Build
+        working-directory: FSW-Mainboard-C
+        run: west build -p -b argus@${{ matrix.revision }}/rp2350b/m33_0 -d build/argus-${{ matrix.revision }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: argus-${{ matrix.revision }}-${{ github.sha }}
+          path: FSW-Mainboard-C/build/argus-${{ matrix.revision }}/zephyr/zephyr.uf2
+          if-no-files-found: error
