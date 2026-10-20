@@ -33,6 +33,7 @@ Resulting layout:
 ```
 argus/
 ├── FSW-Mainboard-C/   <- this repo
+├── FSW-Zephyr-Board-Lib/ <- shared board, pins, buses and bindings
 ├── zephyr/            <- Zephyr itself
 └── modules/           <- libraries Zephyr uses
 ```
@@ -66,46 +67,32 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 
 | Path | What |
 |---|---|
-| `west.yml` | Zephyr version + module allowlist |
-| `boards/cmu/argus/` | Board definition: pins, buses, radio, SD card. One board, one revision per mainboard version. |
-| `zephyr/module.yml` | Makes `boards/` visible to the build |
+| `west.yml` | Imports the shared board repo and its Zephyr version |
 | `CMakeLists.txt`, `prj.conf` | The application |
 | `cmake/` | Build helpers (git version header printed at boot) |
 | `src/`, `include/argus/` | Application code |
 | `tests/`, `test_vectors/` | Tests |
+| `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
 
 ## Hardware revisions
 
 Each mainboard version is a *revision* of the `argus` board, selected with
-`-b argus@<N>/rp2350b/m33_0`. The base files in `boards/cmu/argus/` describe
-revision 4 (pins from the CircuitPython `pins.c` for Mainboard v4).
-
-App code must not hardcode pins or versions. Use devicetree names instead
-(`lora0`, `led-strip`, the `*-gpios` properties on `zephyr,user`, ...) so a new
-mainboard only touches `boards/`.
-
-To add a new version, e.g. 5:
-
-1. Add `- name: "5"` under `revisions:` in `boards/cmu/argus/board.yml`.
-2. Create `boards/cmu/argus/argus_rp2350b_m33_0_5.overlay` with only what changed
-   from revision 4, for example a moved pin:
-   ```dts
-   &lora {
-       busy-gpios = <&gpio0_map 26 GPIO_ACTIVE_HIGH>;
-   };
-   ```
-   Kconfig differences go in `argus_rp2350b_m33_0_5_defconfig`.
-3. Build with `-b argus@5/rp2350b/m33_0`. Once v5 is the main hardware, change
-   `default:` in `board.yml`.
-
-If a version changes the chip itself (e.g. RP2040 → RP2350), it
-can't be a revision; add the new SoC under `socs:` in `board.yml` instead.
-
-Building for a revision that isn't listed fails on purpose (`exact: true`),
-so a v5 build can never silently use v4 pins.
+`-b argus@<N>/rp2350b/m33_0`. The board definition and the procedure for adding
+a revision now live in
+[FSW-Zephyr-Board-Lib](https://github.com/cmu-argus-2/FSW-Zephyr-Board-Lib).
+App code must use its devicetree labels and aliases rather than hardcoded pins.
 
 ## Board notes (revision 4)
 
 - `PERIPH_PWR_EN` (GPIO42) must be driven high before anything on I2C0/I2C1 responds.
 - `WDT_EN` (GPIO15) arms the external watchdog; once armed, `WDT_WDI` (GPIO2) must be toggled or the board resets. Nothing drives it by default.
 - Polarity of the `*_FLT` and `BATT_ALRT` inputs has not been checked against the schematic.
+
+## DRV8235 magnetorquer driver
+
+The driver starts every H-bridge disabled, with target zero and coast selected.
+It enforces the board's 6 V command limit, preserves latched faults until the
+caller explicitly clears them, and does not control the shared `COIL_EN` rail.
+
+The interactive board test, build/flash steps, expected output, and safe manual
+test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).
