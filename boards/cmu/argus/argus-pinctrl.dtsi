@@ -1,0 +1,82 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Revision 4 pin numbers from the Python flight software's
+ * firmware/Mainboard v4/pins.c (the CircuitPython board definition).
+ */
+
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350b-pinctrl.h>
+
+&pinctrl {
+	/* GPS: TX0/RX0 */
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_P44>;
+		};
+
+		group2 {
+			pinmux = <UART0_RX_P45>;
+			input-enable;
+		};
+	};
+
+	/* Jetson: TX1/RX1 */
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_P8>;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_P9>;
+			input-enable;
+		};
+	};
+
+	/* Radio. CS (GPIO33) is a plain GPIO, see cs-gpios. */
+	spi0_default: spi0_default {
+		group1 {
+			pinmux = <SPI0_SCK_P34>, <SPI0_TX_P35>;
+		};
+
+		group2 {
+			pinmux = <SPI0_RX_P32>;
+			input-enable;
+		};
+	};
+
+	/* SD card. CS (GPIO13) is a plain GPIO, see cs-gpios. */
+	spi1_default: spi1_default {
+		group1 {
+			pinmux = <SPI1_SCK_P10>, <SPI1_TX_P11>;
+		};
+
+		group2 {
+			pinmux = <SPI1_RX_P12>;
+			input-enable;
+		};
+	};
+
+	/* -X/-Y/-Z faces, IMU */
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_P24>, <I2C0_SCL_P25>;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+
+	/* +X/+Y/+Z faces, RTC, fuel gauge, power monitors */
+	i2c1_default: i2c1_default {
+		group1 {
+			pinmux = <I2C1_SDA_P46>, <I2C1_SCL_P47>;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+
+	ws2812_pio0_default: ws2812_pio0_default {
+		ws2812 {
+			pinmux = <PIO0_P0>;
+		};
+	};
+};

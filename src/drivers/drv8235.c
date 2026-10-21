@@ -478,7 +478,7 @@ int drv8235_reconfigure(const struct device *dev)
 	return result;
 }
 
-static int drv8235_init(const struct device *dev)
+static __maybe_unused int drv8235_init(const struct device *dev)
 {
 	const struct drv8235_config *config = dev->config;
 	struct drv8235_data *data = dev->data;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20.0)
 
-# Default target (current default revision is set in the shared board repo).
+# Default target (current default hardware revision is set in boards/cmu/argus/board.yml).
 # Pick a revision explicitly with e.g. `west build -b argus@4/rp2350b/m33_0`.
 set(BOARD argus/rp2350b/m33_0)
 

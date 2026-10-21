@@ -1,0 +1,287 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * CMU Argus Mainboard: RP2350B, W25Q32JV (4 MiB) flash.
+ *
+ * These base files describe revision 4. Later revisions go in
+ * argus_rp2350b_m33_0_<N>.overlay (see board.yml).
+ *
+ * Pin numbers come from the Python flight software's
+ * firmware/Mainboard v4/pins.c and bus assignments from its
+ * flight/hal/argus_v4.py.
+ *
+ * GPIOs are referenced through &gpio0_map, which takes the raw GPIO number
+ * (0-47) and routes 32-47 to the high bank, so numbers match pins.c.
+ */
+
+#include <freq.h>
+
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/led/led.h>
+#include <zephyr/dt-bindings/lora/sx126x.h>
+
+#include "argus-pinctrl.dtsi"
+
+/ {
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,flash-controller = &qmi;
+		zephyr,code-partition = &code_partition;
+	};
+
+	aliases {
+		watchdog0 = &wdt0;
+		led-strip = &neopixel;
+		lora0 = &lora;
+		gps-uart = &uart0;
+		jetson-uart = &uart1;
+	};
+
+	/*
+	 * Board control lines, read with GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), <prop>).
+	 * Enables are active-high (the Python HAL sets them True to turn things on).
+	 * *-flt-gpios and batt-alrt-gpios are described at the raw pin level;
+	 * their real polarity has not been checked against the schematic.
+	 */
+	/* PERIPH_PWR_EN. Powers I2C0/I2C1 devices; comes up before their drivers init. */
+	periph_3v3: periph-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "periph_3v3";
+		enable-gpios = <&gpio0_map 42 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <100000>;
+		regulator-boot-on;
+	};
+
+	zephyr,user {
+		periph-pwr-flt-gpios = <&gpio0_map 41 GPIO_ACTIVE_HIGH>;
+
+		/* Power-cycles the MCU rail. */
+		main-pwr-rst-gpios = <&gpio0_map 43 GPIO_ACTIVE_HIGH>;
+
+		gps-en-gpios = <&gpio0_map 38 GPIO_ACTIVE_HIGH>;
+		gps-flt-gpios = <&gpio0_map 39 GPIO_ACTIVE_HIGH>;
+		lora-en-gpios = <&gpio0_map 36 GPIO_ACTIVE_HIGH>;
+		lora-flt-gpios = <&gpio0_map 37 GPIO_ACTIVE_HIGH>;
+		coil-en-gpios = <&gpio0_map 1 GPIO_ACTIVE_HIGH>;
+		rw-en-gpios = <&gpio0_map 31 GPIO_ACTIVE_HIGH>;
+
+		heat-en-gpios = <&gpio0_map 6 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&gpio0_map 4 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&gpio0_map 5 GPIO_ACTIVE_HIGH>;
+
+		jetson-en-gpios = <&gpio0_map 7 GPIO_ACTIVE_HIGH>;
+		/* Wired to the 5V DC-DC enable, per argus_v4.py. */
+		jetson-sd-req-gpios = <&gpio0_map 18 GPIO_ACTIVE_HIGH>;
+
+		batt-alrt-gpios = <&gpio0_map 3 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * External watchdog. Driving WDT_EN high arms it; after that WDT_WDI
+		 * must be toggled or the board resets. Left undriven at boot.
+		 */
+		wdt-en-gpios = <&gpio0_map 15 GPIO_ACTIVE_HIGH>;
+		wdt-wdi-gpios = <&gpio0_map 2 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&flash0 {
+	reg = <0x10000000 DT_SIZE_M(4)>;
+	ranges = <0x0 0x10000000 DT_SIZE_M(4)>;
+	status = "okay";
+
+	partitions {
+		ranges;
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+
+		code_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "code";
+			reg = <0x0 DT_SIZE_M(3)>;
+			read-only;
+		};
+
+		storage_partition: partition@300000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x300000 DT_SIZE_M(1)>;
+		};
+	};
+};
+
+/* Hogs: pins held low from GPIO init, before the app runs. Bank pin = GPIO - 32 on gpio0_hi. */
+gpio0_lo: &gpio0 {
+	status = "okay";
+
+	heat-en-hog {
+		gpio-hog;
+		gpios = <6 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+
+	heat0-on-hog {
+		gpio-hog;
+		gpios = <4 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+
+	heat1-on-hog {
+		gpio-hog;
+		gpios = <5 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+
+	jetson-en-hog {
+		gpio-hog;
+		gpios = <7 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+
+	jetson-sd-req-hog {
+		gpio-hog;
+		gpios = <18 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+
+&gpio0_hi {
+	status = "okay";
+
+	/* GPIO43 */
+	main-pwr-rst-hog {
+		gpio-hog;
+		gpios = <11 GPIO_ACTIVE_HIGH>;
+		output-low;
+	};
+};
+
+/* GPS */
+&uart0 {
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/* Jetson */
+&uart1 {
+	current-speed = <460800>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&i2c0 {
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&i2c1 {
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	rtc_mfd: ds3231@68 {
+		compatible = "maxim,ds3231-mfd";
+		reg = <0x68>;
+		status = "okay";
+
+		rtc: rtc {
+			compatible = "maxim,ds3231-rtc";
+			status = "okay";
+		};
+	};
+};
+
+&spi0 {
+	clock-frequency = <DT_FREQ_M(2)>;
+	pinctrl-0 = <&spi0_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0_map 33 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	/* Settings match the defaults used by flight/hal/drivers/sx126x.py. */
+	lora: lora@0 {
+		compatible = "semtech,sx1262";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(2)>;
+		reset-gpios = <&gpio0_map 19 GPIO_ACTIVE_LOW>;
+		busy-gpios = <&gpio0_map 20 GPIO_ACTIVE_HIGH>;
+		dio1-gpios = <&gpio0_map 21 GPIO_ACTIVE_HIGH>;
+		rx-enable-gpios = <&gpio0_map 22 GPIO_ACTIVE_HIGH>;
+		tx-enable-gpios = <&gpio0_map 23 GPIO_ACTIVE_HIGH>;
+		dio3-tcxo-voltage = <SX126X_DIO3_TCXO_1V7>;
+		tcxo-power-startup-delay-ms = <5>;
+		status = "okay";
+	};
+};
+
+&spi1 {
+	clock-frequency = <DT_FREQ_M(4)>;
+	pinctrl-0 = <&spi1_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0_map 13 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	sdhc0: sdhc@0 {
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <0>;
+		spi-max-frequency = <DT_FREQ_M(4)>;
+		status = "okay";
+
+		mmc {
+			compatible = "zephyr,sdmmc-disk";
+			disk-name = "SD";
+			status = "okay";
+		};
+	};
+};
+
+&pio0 {
+	status = "okay";
+
+	pio-ws2812 {
+		compatible = "worldsemi,ws2812-rpi_pico-pio";
+		pinctrl-0 = <&ws2812_pio0_default>;
+		pinctrl-names = "default";
+		bit-waveform = <3>, <3>, <4>;
+		status = "okay";
+
+		neopixel: ws2812 {
+			gpios = <&gpio0_map 0 GPIO_ACTIVE_HIGH>;
+			chain-length = <1>;
+			color-mapping = <LED_COLOR_ID_GREEN
+					 LED_COLOR_ID_RED
+					 LED_COLOR_ID_BLUE>;
+			reset-delay = <280>;
+			frequency = <DT_FREQ_K(800)>;
+			status = "okay";
+		};
+	};
+};
+
+&timer0 {
+	status = "okay";
+};
+
+&wdt0 {
+	status = "okay";
+};
+
+&vreg {
+	status = "okay";
+};
+
+&rng {
+	status = "okay";
+};
+
+zephyr_udc0: &usbd {
+	status = "okay";
+};
+
+#include <../boards/common/usb/cdc_acm_serial.dtsi>
