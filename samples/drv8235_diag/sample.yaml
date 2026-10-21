@@ -1,0 +1,14 @@
+sample:
+  name: Argus DRV8235 diagnostic shell
+  description: Safely inspect and manually exercise the six magnetorquer drivers
+tests:
+  sample.argus.drv8235_diag:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - i2c
+      - actuator
