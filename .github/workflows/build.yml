@@ -10,35 +10,24 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch/PR cancels the older run.
+# A newer push to the same PR cancels its older run. Runs on main are never
+# cancelled, so every merged commit gets a build.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Read the board revision(s) to build from board.yml.
-  revisions:
-    runs-on: ubuntu-24.04
-    outputs:
-      list: ${{ steps.read.outputs.list }}
-    steps:
-      - uses: actions/checkout@v7
-      - id: read
-        run: echo "list=$(yq -o=json -I=0 '[.board.revision.revisions[].name]' boards/cmu/argus/board.yml)" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: revisions
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        revision: ${{ fromJSON(needs.revisions.outputs.list) }}
     steps:
       # The west workspace is the job's root folder, with this repo checked out
       # into FSW-Mainboard-C/ next to zephyr/ and modules/, like a local setup.
+      # On PRs, build the branch's own commit rather than GitHub's temporary
+      # merge commit, so the hash in the artifact name and boot message exists.
       - uses: actions/checkout@v7
         with:
           path: FSW-Mainboard-C
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -50,26 +39,29 @@ jobs:
         with:
           app-path: FSW-Mainboard-C
           toolchains: arm-zephyr-eabi
-          ccache-cache-key: argus-${{ matrix.revision }}
+          ccache-cache-key: argus
 
+      # No revision given, so Zephyr builds the board's default revision.
       - name: Build
         working-directory: FSW-Mainboard-C
-        run: west build -p -b argus@${{ matrix.revision }}/rp2350b/m33_0 -d build/argus-${{ matrix.revision }}
+        run: west build -p -b argus/rp2350b/m33_0 -d build/argus
 
       - uses: actions/upload-artifact@v7
         with:
-          name: argus-${{ matrix.revision }}-${{ github.sha }}
-          path: FSW-Mainboard-C/build/argus-${{ matrix.revision }}/zephyr/zephyr.uf2
+          name: argus-${{ github.event.pull_request.head.sha || github.sha }}
+          path: FSW-Mainboard-C/build/argus/zephyr/zephyr.uf2
           if-no-files-found: error
 
   # Twister finds every testcase.yaml under tests/, builds each one as a Linux
   # executable (native_sim), runs it, and fails the job if any test fails.
+  # The checks around it fail the job if a test would be silently skipped.
   test:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           path: FSW-Mainboard-C
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -82,5 +74,32 @@ jobs:
           app-path: FSW-Mainboard-C
           toolchains: arm-zephyr-eabi
 
+      # Twister ignores any folder without a testcase.yaml - disallow this in
+      # the test directory.
+      - name: Check every test has a testcase.yaml
+        working-directory: FSW-Mainboard-C
+        run: |
+          missing=0
+          for cmake in $(find tests -name CMakeLists.txt); do
+            dir=$(dirname "$cmake")
+            if [ ! -e "$dir/testcase.yaml" ] && [ ! -e "$dir/tests.yaml" ]; then
+              echo "::error file=$cmake::$dir has no testcase.yaml, so Twister will never run it"
+              missing=1
+            fi
+          done
+          exit $missing
+
       - name: Run tests
-        run: west twister -T FSW-Mainboard-C/tests -p native_sim/native/64 -v --inline-logs
+        run: west twister -T FSW-Mainboard-C/tests -p native_sim/native/64 -v --inline-logs --report-filtered
+
+      # A test that doesn't allow native_sim/native/64 (or misspells it) is
+      # "filtered" by Twister, which still passes. Treat that as a failure.
+      - name: Check no tests were skipped
+        shell: python3 {0}
+        run: |
+          import json, sys
+          suites = json.load(open("twister-out/twister.json"))["testsuites"]
+          filtered = [s for s in suites if s["status"] == "filtered"]
+          for s in filtered:
+              print(f"::error::{s['name']} was skipped on {s['platform']}: {s['reason']}")
+          sys.exit(1 if filtered else 0)
