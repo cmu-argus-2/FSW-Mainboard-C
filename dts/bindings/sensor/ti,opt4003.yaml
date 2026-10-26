@@ -1,0 +1,39 @@
+# Devicetree binding for the OPT4003. Each property maps to a CONFIGURATION
+# register field (pages 30 and 31 of the datasheet). Defaults should match the
+# constructor defaults in flight/hal/drivers/opt4003.py.
+
+description: TI OPT4003 ambient light sensor
+
+compatible: "ti,opt4003"
+
+include: [sensor-device.yaml, i2c-device.yaml]
+
+properties:
+  quick-wakeup:
+    type: boolean
+    description: Faster wakeup from standby in one-shot mode, at higher power.
+
+  lux-range:
+    type: int
+    default: 12
+    enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 12]
+    description: |
+      0: 561 lux, 1: 1122 lux, 2: 2.2 klux, 3: 4.4 klux, 4: 8.9 klux,
+      5: 17.9 klux, 6: 35.9 klux, 7: 71.8 klux, 8: 143.6 klux, 12: auto
+
+  conversion-time:
+    type: int
+    default: 8
+    enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    description: |
+      0: 600us, 1: 1ms, 2: 1.8ms, 3: 3.4ms, 4: 6.5ms, 5: 12.7ms,
+      6: 25ms, 7: 50ms, 8: 100ms, 9: 200ms, 10: 400ms, 11: 800ms
+
+  # TODO:
+  # operating-mode: int, default 3. Leave 0 (power down) out of the enum,
+  #   since fetch can never succeed in that mode.
+  # latch: the Python default is True (latched window mode). Booleans
+  #   default to false, so name it after the other mode, e.g.
+  #   transparent-hysteresis, and set the LATCH bit when it is absent.
+  # int-active-high: boolean, default active low.
+  # fault-count: int, default 0, enum [0, 1, 2, 3].

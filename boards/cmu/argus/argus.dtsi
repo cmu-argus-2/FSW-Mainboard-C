@@ -195,6 +195,12 @@ gpio0_lo: &gpio0 {
 			status = "okay";
 		};
 	};
+
+	light_xp: opt4003@44 {
+		compatible = "ti,opt4003";
+		reg = <0x44>;
+		conversion-time = <0>;
+	};
 };
 
 &spi0 {
