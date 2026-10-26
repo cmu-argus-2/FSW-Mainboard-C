@@ -29,11 +29,20 @@ properties:
       0: 600us, 1: 1ms, 2: 1.8ms, 3: 3.4ms, 4: 6.5ms, 5: 12.7ms,
       6: 25ms, 7: 50ms, 8: 100ms, 9: 200ms, 10: 400ms, 11: 800ms
 
-  # TODO:
-  # operating-mode: int, default 3. Leave 0 (power down) out of the enum,
-  #   since fetch can never succeed in that mode.
-  # latch: the Python default is True (latched window mode). Booleans
-  #   default to false, so name it after the other mode, e.g.
-  #   transparent-hysteresis, and set the LATCH bit when it is absent.
-  # int-active-high: boolean, default active low.
-  # fault-count: int, default 0, enum [0, 1, 2, 3].
+  transparent-hysteresis:
+    type: boolean
+    description: |
+      Use transparent hysteresis interrupt mode. Default is latched window mode
+      (pages 14 and 15 of the datasheet).
+
+  int-active-high:
+    type: boolean
+    description: INT pin is active high. Default is active low.
+
+  fault-count:
+    type: int
+    default: 0
+    enum: [0, 1, 2, 3]
+    description: |
+      Consecutive faults needed to trigger the threshold mechanism.
+      0: one, 1: two, 2: four, 3: eight

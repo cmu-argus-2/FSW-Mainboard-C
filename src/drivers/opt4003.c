@@ -33,7 +33,12 @@ LOG_MODULE_REGISTER(opt4003, CONFIG_SENSOR_LOG_LEVEL);
 #define OPT4003_CFG_QUICK_WAKEUP    BIT(15)
 #define OPT4003_CFG_LUX_RANGE       GENMASK(13, 10)
 #define OPT4003_CFG_CONVERSION_TIME GENMASK(9, 6)
-/* TODO: OPT4003_CFG_OPERATING_MODE (5:4), _LATCH (3), _INT_POL (2), _FAULT_COUNT (1:0) */
+#define OPT4003_CFG_OPERATING_MODE  GENMASK(5, 4)
+#define OPT4003_CFG_LATCH           BIT(3)
+#define OPT4003_CFG_INT_POL         BIT(2)
+#define OPT4003_CFG_FAULT_COUNT     GENMASK(1, 0)
+
+#define OPT4003_MODE_CONTINUOUS 3
 
 /* DEVICE_ID register fields */
 #define OPT4003_DIDL          GENMASK(13, 12)
@@ -268,8 +273,11 @@ static int opt4003_init(const struct device *dev)
 #define OPT4003_CONFIG_REG(inst)                                                             \
 	((DT_INST_PROP(inst, quick_wakeup) ? OPT4003_CFG_QUICK_WAKEUP : 0) |                  \
 	 FIELD_PREP(OPT4003_CFG_LUX_RANGE, DT_INST_PROP(inst, lux_range)) |                  \
-	 FIELD_PREP(OPT4003_CFG_CONVERSION_TIME, DT_INST_PROP(inst, conversion_time))         \
-	 /* TODO: operating mode, latch, int polarity, fault count */)
+	 FIELD_PREP(OPT4003_CFG_CONVERSION_TIME, DT_INST_PROP(inst, conversion_time)) |       \
+	 FIELD_PREP(OPT4003_CFG_OPERATING_MODE, OPT4003_MODE_CONTINUOUS) |         \
+	 (DT_INST_PROP(inst, transparent_hysteresis) ? 0 : OPT4003_CFG_LATCH) |                \
+	 (DT_INST_PROP(inst, int_active_high) ? OPT4003_CFG_INT_POL : 0) |                     \
+	 FIELD_PREP(OPT4003_CFG_FAULT_COUNT, DT_INST_PROP(inst, fault_count)))
 
 /* Instantiates config, data and the device for one devicetree node */
 #define OPT4003_DEFINE(inst)                                                                 \
