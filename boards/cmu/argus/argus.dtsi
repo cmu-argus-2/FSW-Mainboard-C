@@ -177,6 +177,24 @@ gpio0_lo: &gpio0 {
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-names = "default";
 	status = "okay";
+
+	light_xm: opt4003@44 {
+		compatible = "ti,opt4003";
+		reg = <0x44>;
+		conversion-time = <0>;
+	};
+
+	light_ym: opt4003@45 {
+		compatible = "ti,opt4003";
+		reg = <0x45>;
+		conversion-time = <0>;
+	};
+
+	light_zm: opt4003@46 {
+		compatible = "ti,opt4003";
+		reg = <0x46>;
+		conversion-time = <0>;
+	};
 };
 
 &i2c1 {
@@ -199,6 +217,36 @@ gpio0_lo: &gpio0 {
 	light_xp: opt4003@44 {
 		compatible = "ti,opt4003";
 		reg = <0x44>;
+		conversion-time = <0>;
+	};
+
+	light_yp: opt4003@45 {
+		compatible = "ti,opt4003";
+		reg = <0x45>;
+		conversion-time = <0>;
+	};
+
+	light_zp_xp: opt4003@54 {
+		compatible = "ti,opt4003";
+		reg = <0x54>;
+		conversion-time = <0>;
+	};
+
+	light_zp_ym: opt4003@55 {
+		compatible = "ti,opt4003";
+		reg = <0x55>;
+		conversion-time = <0>;
+	};
+
+	light_zp_xm: opt4003@56 {
+		compatible = "ti,opt4003";
+		reg = <0x56>;
+		conversion-time = <0>;
+	};
+
+	light_zp_yp: opt4003@57 {
+		compatible = "ti,opt4003";
+		reg = <0x57>;
 		conversion-time = <0>;
 	};
 };
