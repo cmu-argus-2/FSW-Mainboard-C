@@ -1,6 +1,6 @@
 /**
  * @authors Ailisi Bao, John Buttles, Jacob Rohozen
- * @file max17205_demo.c
+ * @file main.c
  *
  * @brief On-target demo for the MAX17205 fuel gauge driver (src/drivers/max17205.c).
  *
@@ -9,16 +9,8 @@
  * prints its errno instead of a value, so a missing battery board, a NACK on the shadow-RAM
  * address (0x0B), or a wrong register all show up on their own line.
  *
- * This is a Zephyr application main(), not a test: the driver's tests are in
- * tests/drivers/max17205. To run it on the board, swap it in for src/main.c in the
- * top-level CMakeLists.txt:
- *
- *     target_sources(app PRIVATE
- *             tests/max17205/max17205_demo.c
- *             src/drivers/max17205.c
- *     )
- *
- * then `west build` and `west flash` as usual.
+ * Build and flash instructions are in samples/max17205_demo/README.md. The driver's tests
+ * are in tests/drivers/max17205.
  */
 
 #include <zephyr/kernel.h>

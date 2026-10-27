@@ -1,0 +1,13 @@
+sample:
+  name: Argus OPT4003 demo
+  description: Print the lux reading of every OPT4003 light sensor once a second
+tests:
+  sample.argus.opt4003_demo:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - sensors

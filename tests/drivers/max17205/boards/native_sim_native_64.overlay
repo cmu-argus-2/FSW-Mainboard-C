@@ -1,0 +1,2 @@
+/* Zephyr only applies an overlay named for the full board target, so the 64-bit variant reuses native_sim's */
+#include "native_sim.overlay"
