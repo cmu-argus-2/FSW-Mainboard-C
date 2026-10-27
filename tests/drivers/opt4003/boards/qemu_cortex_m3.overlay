@@ -1,0 +1,15 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+/ {
+	/* qemu_cortex_m3 has no I2C node, so add an emulated controller */
+	fake_i2c: i2c@100 {
+		compatible = "zephyr,i2c-emul-controller";
+		clock-frequency = <I2C_BITRATE_STANDARD>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0x100 4>;
+		status = "okay";
+
+#include "../opt4003_nodes.dtsi"
+	};
+};
