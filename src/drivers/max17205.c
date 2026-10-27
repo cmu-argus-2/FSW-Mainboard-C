@@ -110,7 +110,7 @@ static int max17205_get_prop(const struct device *dev, fuel_gauge_prop_t prop, u
         case FUEL_GAUGE_CYCLE_COUNT:
             rc = max17205_read(&cfg->main, MAX17205_CYCLES_ADDR, &raw);
             if (rc == 0) {
-                val->cycle_count = (uint32_t)raw;
+                val->cycle_count = (uint32_t)raw * 16 / 100;  /* 16% of a full cycle per LSB */
             }
             return rc;
         case FUEL_GAUGE_RUNTIME_TO_EMPTY_MINS:
@@ -128,7 +128,7 @@ static int max17205_get_prop(const struct device *dev, fuel_gauge_prop_t prop, u
         case MAX17205_PROP_TIME_PWRUP_S:
             rc = max17205_read(&cfg->main, MAX17205_TIMERH_ADDR, &raw);
             if (rc == 0) {
-                val->custom_uint = (uint32_t)raw;
+                val->custom_uint = (uint32_t)raw * 11520;  /* 3.2 h per LSB */
             }
             return rc;
         case FUEL_GAUGE_TEMPERATURE_DK:

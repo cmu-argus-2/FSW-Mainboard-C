@@ -9,8 +9,8 @@
  * prints its errno instead of a value, so a missing battery board, a NACK on the shadow-RAM
  * address (0x0B), or a wrong register all show up on their own line.
  *
- * This is a Zephyr application main(), not a host test: it is not built by
- * tests/max17205/CMakeLists.txt. To run it on the board, swap it in for src/main.c in the
+ * This is a Zephyr application main(), not a test: the driver's tests are in
+ * tests/drivers/max17205. To run it on the board, swap it in for src/main.c in the
  * top-level CMakeLists.txt:
  *
  *     target_sources(app PRIVATE
@@ -62,7 +62,7 @@ enum demo_fmt {
 	FMT_COUNT,       /* cycle_count */
 	FMT_TTE_MINS,    /* runtime_to_empty_mins */
 	FMT_TTF_MINS,    /* runtime_to_full_mins */
-	FMT_CUSTOM_RAW,  /* custom_uint, unscaled */
+	FMT_CUSTOM_S,    /* custom_uint, seconds */
 	FMT_DK,          /* temperature_dk */
 	FMT_CUSTOM_DK,   /* custom_int, 0.1 K */
 };
@@ -82,7 +82,7 @@ static const struct demo_prop props[] = {
 	{ FUEL_GAUGE_CYCLE_COUNT, "Cycle count", FMT_COUNT },
 	{ FUEL_GAUGE_RUNTIME_TO_EMPTY_MINS, "Time to empty", FMT_TTE_MINS },
 	{ FUEL_GAUGE_RUNTIME_TO_FULL_MINS, "Time to full", FMT_TTF_MINS },
-	{ MAX17205_PROP_TIME_PWRUP_S, "TimerH (raw)", FMT_CUSTOM_RAW },
+	{ MAX17205_PROP_TIME_PWRUP_S, "Time since power-up", FMT_CUSTOM_S },
 	{ FUEL_GAUGE_TEMPERATURE_DK, "Temperature", FMT_DK },
 	{ MAX17205_PROP_TEMP_AIN1_DK, "Thermistor AIN1", FMT_CUSTOM_DK },
 	{ MAX17205_PROP_TEMP_AIN2_DK, "Thermistor AIN2", FMT_CUSTOM_DK },
@@ -130,8 +130,8 @@ static void print_value(enum demo_fmt fmt, const union fuel_gauge_prop_val *val)
 	case FMT_TTF_MINS:
 		printk("%u min", val->runtime_to_full_mins);
 		break;
-	case FMT_CUSTOM_RAW:
-		printk("%u", val->custom_uint);
+	case FMT_CUSTOM_S:
+		printk("%u s", val->custom_uint);
 		break;
 	case FMT_DK:
 		print_fixed(DK_TO_DECI_C(val->temperature_dk), 10, 1);
