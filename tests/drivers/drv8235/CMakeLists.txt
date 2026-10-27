@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.20.0)
 
 get_filename_component(ARGUS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 
+# The emulator's binding is a test fixture, independent of the hardware board module.
+list(APPEND DTS_ROOT "${CMAKE_CURRENT_LIST_DIR}")
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(drv8235_tests)
 
