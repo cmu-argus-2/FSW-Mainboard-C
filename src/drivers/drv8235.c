@@ -10,10 +10,12 @@
 #include "argus/drivers/drv8235.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stddef.h>
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/regulator.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
@@ -36,22 +38,27 @@ enum drv8235_register {
 
 enum drv8235_register_bits {
 	DRV8235_CONFIG0_ENABLE_OUTPUT = BIT(7),
+	DRV8235_CONFIG0_ENABLE_STALL = BIT(5),
 	DRV8235_CONFIG0_CLEAR_FAULT = BIT(1),
 
 	DRV8235_CONFIG3_INTERNAL_VREF = BIT(4),
+	DRV8235_CONFIG3_AUTO_RETRY = BIT(1) | BIT(0),
 
+	DRV8235_CONFIG4_STALL_REPORT = BIT(5),
 	DRV8235_CONFIG4_PWM_MODE = BIT(3),
 	DRV8235_CONFIG4_I2C_BRIDGE_CONTROL = BIT(2),
 	DRV8235_CONFIG4_BRIDGE_MASK = BIT(1) | BIT(0),
 
 	DRV8235_REG_CTRL0_REGULATION_MASK = BIT(4) | BIT(3),
 	DRV8235_REG_CTRL0_VOLTAGE_REGULATION = BIT(4) | BIT(3),
+	DRV8235_REG_CTRL0_SOFT_START = BIT(5),
 
 	DRV8235_RC_CTRL2_INV_R_SCALE_MASK = BIT(7) | BIT(6),
 };
 
 struct drv8235_config {
 	struct i2c_dt_spec bus;
+	const struct device *vm_supply;
 	uint32_t max_output_uv;
 	uint32_t coil_resistance_milliohm;
 	uint32_t imtr_full_scale_ua;
@@ -59,9 +66,7 @@ struct drv8235_config {
 
 struct drv8235_data {
 	struct k_mutex lock;
-	bool output_enabled;
-	uint8_t target_code;
-	enum drv8235_bridge_mode bridge_mode;
+	bool configured;
 };
 
 static int drv8235_reg_read(const struct drv8235_config *config, uint8_t reg, uint8_t *value)
@@ -102,11 +107,35 @@ static int drv8235_set_bridge_locked(const struct drv8235_config *config,
 				  (uint8_t)mode);
 }
 
+/* Observe the application's rail ownership; the driver never enables the rail. */
+static int drv8235_check_supply(const struct drv8235_config *config)
+{
+	if (!device_is_ready(config->vm_supply)) {
+		return -ENODEV;
+	}
+
+	return regulator_is_enabled(config->vm_supply) ? 0 : -EACCES;
+}
+
 /* Best-effort hardware safe state. The first error is preserved. */
 static int drv8235_safe_locked(const struct drv8235_config *config, struct drv8235_data *data)
 {
-	int result =
-		drv8235_reg_update(config, DRV8235_REG_CONFIG0, DRV8235_CONFIG0_ENABLE_OUTPUT, 0U);
+	int result = drv8235_check_supply(config);
+
+	if (result != 0) {
+		data->configured = false;
+		return result;
+	}
+	result = drv8235_reg_update(config, DRV8235_REG_CONFIG0,
+				    DRV8235_CONFIG0_ENABLE_OUTPUT, 0U);
+	if (result == 0) {
+		uint8_t config0;
+
+		result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &config0);
+		if (result == 0 && (config0 & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U) {
+			result = -EIO;
+		}
+	}
 	int step = drv8235_reg_write(config, DRV8235_REG_TARGET, 0U);
 
 	if (result == 0) {
@@ -117,12 +146,96 @@ static int drv8235_safe_locked(const struct drv8235_config *config, struct drv82
 		result = step;
 	}
 
-	if (result == 0) {
-		data->output_enabled = false;
-		data->target_code = 0U;
-		data->bridge_mode = DRV8235_BRIDGE_COAST;
+	if (result != 0) {
+		data->configured = false;
 	}
 
+	return result;
+}
+
+/* Read back safety-critical settings, including after a separately cleared NPOR. */
+static int drv8235_verify_settings(const struct drv8235_config *config, uint8_t *bridge)
+{
+	uint8_t scale;
+	uint8_t inv_r;
+	int result = drv8235_calculate_inv_r(config->coil_resistance_milliohm, &scale, &inv_r);
+
+	if (result != 0) {
+		return result;
+	}
+	const struct {
+		uint8_t reg;
+		uint8_t mask;
+		uint8_t expected;
+	} settings[] = {
+		{DRV8235_REG_CONFIG0, DRV8235_CONFIG0_ENABLE_STALL, 0U},
+		{DRV8235_REG_CONFIG3,
+		 DRV8235_CONFIG3_INTERNAL_VREF | DRV8235_CONFIG3_AUTO_RETRY,
+		 DRV8235_CONFIG3_INTERNAL_VREF},
+		{DRV8235_REG_CONFIG4,
+		 DRV8235_CONFIG4_PWM_MODE | DRV8235_CONFIG4_I2C_BRIDGE_CONTROL |
+			 DRV8235_CONFIG4_STALL_REPORT,
+		 DRV8235_CONFIG4_PWM_MODE | DRV8235_CONFIG4_I2C_BRIDGE_CONTROL},
+		{DRV8235_REG_REG_CTRL0,
+		 DRV8235_REG_CTRL0_REGULATION_MASK | DRV8235_REG_CTRL0_SOFT_START,
+		 DRV8235_REG_CTRL0_VOLTAGE_REGULATION},
+		{DRV8235_REG_RC_CTRL2, DRV8235_RC_CTRL2_INV_R_SCALE_MASK, (uint8_t)(scale << 6)},
+		{DRV8235_REG_RC_CTRL3, UINT8_MAX, inv_r},
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(settings); ++i) {
+		uint8_t value;
+
+		result = drv8235_reg_read(config, settings[i].reg, &value);
+		if (result != 0) {
+			return result;
+		}
+		if ((value & settings[i].mask) != settings[i].expected) {
+			return -EAGAIN;
+		}
+		if (bridge != NULL && settings[i].reg == DRV8235_REG_CONFIG4) {
+			*bridge = value & DRV8235_CONFIG4_BRIDGE_MASK;
+		}
+	}
+
+	/* A stale or externally changed target must not bypass the voltage limit. */
+	uint8_t target;
+
+	result = drv8235_reg_read(config, DRV8235_REG_TARGET, &target);
+	if (result == 0 && (uint64_t)target * DRV8235_TARGET_FULL_SCALE_UV >
+			  (uint64_t)config->max_output_uv * DRV8235_TARGET_FULL_SCALE_CODE) {
+		return -EAGAIN;
+	}
+	return result;
+}
+
+static int drv8235_check_ready_locked(const struct drv8235_config *config,
+				     struct drv8235_data *data, uint8_t *bridge)
+{
+	struct drv8235_faults faults;
+	uint8_t raw;
+	int result = drv8235_check_supply(config);
+
+	if (result == 0 && !data->configured) {
+		result = -EAGAIN;
+	}
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &raw);
+	}
+	if (result == 0) {
+		(void)drv8235_decode_faults(raw, &faults);
+		if (faults.power_on_reset) {
+			result = -EAGAIN;
+		} else if (faults.any) {
+			return -EIO;
+		}
+	}
+	if (result == 0) {
+		result = drv8235_verify_settings(config, bridge);
+	}
+	if (result != 0) {
+		data->configured = false;
+	}
 	return result;
 }
 
@@ -140,19 +253,17 @@ int drv8235_set_enabled(const struct device *dev, bool enabled)
 	if (!enabled) {
 		result = drv8235_safe_locked(config, data);
 	} else {
-		uint8_t fault;
-
-		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &fault);
-		if (result == 0 && (fault & BIT(7)) != 0U) {
-			result = -EIO;
-		}
+		result = drv8235_check_ready_locked(config, data, NULL);
 		if (result == 0) {
 			result = drv8235_reg_update(config, DRV8235_REG_CONFIG0,
 						    DRV8235_CONFIG0_ENABLE_OUTPUT,
 						    DRV8235_CONFIG0_ENABLE_OUTPUT);
+			if (result != 0) {
+				data->configured = false;
+			}
 		}
-		if (result == 0) {
-			data->output_enabled = true;
+		if (result != 0) {
+			(void)drv8235_safe_locked(config, data);
 		}
 	}
 	k_mutex_unlock(&data->lock);
@@ -172,10 +283,12 @@ int drv8235_is_enabled(const struct device *dev, bool *enabled)
 	int result;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &value);
+	result = drv8235_check_supply(config);
 	if (result == 0) {
-		data->output_enabled = (value & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U;
-		*enabled = data->output_enabled;
+		result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &value);
+	}
+	if (result == 0) {
+		*enabled = (value & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U;
 	}
 	k_mutex_unlock(&data->lock);
 
@@ -199,18 +312,21 @@ int drv8235_set_output_uv(const struct device *dev, int32_t voltage_uv)
 	}
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	/* Coast before changing polarity, then apply target before direction. */
-	result = drv8235_set_bridge_locked(config, DRV8235_BRIDGE_COAST);
+	uint8_t previous_mode;
+
+	result = drv8235_check_ready_locked(config, data, &previous_mode);
+	/* Soft start/stop is disabled. Same-direction updates keep driving. */
+	if (result == 0 && previous_mode != mode && previous_mode != DRV8235_BRIDGE_COAST) {
+		result = drv8235_set_bridge_locked(config, DRV8235_BRIDGE_COAST);
+	}
 	if (result == 0) {
 		result = drv8235_reg_write(config, DRV8235_REG_TARGET, code);
 	}
 	if (result == 0) {
 		result = drv8235_set_bridge_locked(config, mode);
 	}
-	if (result == 0) {
-		data->target_code = code;
-		data->bridge_mode = mode;
-	} else {
+	if (result != 0) {
+		data->configured = false;
 		(void)drv8235_safe_locked(config, data);
 	}
 	k_mutex_unlock(&data->lock);
@@ -234,14 +350,15 @@ int drv8235_brake(const struct device *dev)
 	int result;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_reg_write(config, DRV8235_REG_TARGET, 0U);
+	result = drv8235_check_ready_locked(config, data, NULL);
+	if (result == 0) {
+		result = drv8235_reg_write(config, DRV8235_REG_TARGET, 0U);
+	}
 	if (result == 0) {
 		result = drv8235_set_bridge_locked(config, DRV8235_BRIDGE_BRAKE);
 	}
-	if (result == 0) {
-		data->target_code = 0U;
-		data->bridge_mode = DRV8235_BRIDGE_BRAKE;
-	} else {
+	if (result != 0) {
+		data->configured = false;
 		(void)drv8235_safe_locked(config, data);
 	}
 	k_mutex_unlock(&data->lock);
@@ -262,10 +379,16 @@ int drv8235_get_telemetry(const struct device *dev, struct drv8235_telemetry *te
 	uint8_t raw_duty;
 	uint8_t config0;
 	uint8_t config4;
+	uint8_t raw_fault;
+	struct drv8235_faults faults;
+	struct drv8235_telemetry reading = {0};
 	int result;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_reg_read(config, DRV8235_REG_VOLTAGE_STATUS, &raw_voltage);
+	result = drv8235_check_supply(config);
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_VOLTAGE_STATUS, &raw_voltage);
+	}
 	if (result == 0) {
 		result = drv8235_reg_read(config, DRV8235_REG_CURRENT_STATUS, &raw_current);
 	}
@@ -278,27 +401,41 @@ int drv8235_get_telemetry(const struct device *dev, struct drv8235_telemetry *te
 	if (result == 0) {
 		result = drv8235_reg_read(config, DRV8235_REG_CONFIG4, &config4);
 	}
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &raw_fault);
+	}
 
 	if (result == 0) {
-		telemetry->raw_voltage = raw_voltage;
-		telemetry->raw_current = raw_current;
-		telemetry->raw_duty = raw_duty & DRV8235_DUTY_FULL_SCALE_CODE;
-		telemetry->bridge_mode =
+		(void)drv8235_decode_faults(raw_fault, &faults);
+		if (faults.power_on_reset) {
+			data->configured = false;
+		}
+		reading.raw_voltage = raw_voltage;
+		reading.raw_current = raw_current;
+		reading.raw_duty = raw_duty & DRV8235_DUTY_FULL_SCALE_CODE;
+		reading.bridge_mode =
 			(enum drv8235_bridge_mode)(config4 & DRV8235_CONFIG4_BRIDGE_MASK);
-		telemetry->output_enabled = (config0 & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U;
-		result = drv8235_voltage_from_code(raw_voltage, telemetry->bridge_mode,
-						   &telemetry->voltage_uv);
+		reading.output_enabled = (config0 & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U;
+		result = drv8235_voltage_from_code(raw_voltage, reading.bridge_mode,
+						   &reading.voltage_uv);
 	}
-	if (result == 0) {
+	/* Low-side brake still senses winding current. Hi-Z/disabled paths do not. */
+	const uint8_t required_control = DRV8235_CONFIG4_PWM_MODE |
+					 DRV8235_CONFIG4_I2C_BRIDGE_CONTROL;
+
+	if (result == 0 && data->configured && !faults.any && reading.output_enabled &&
+	    reading.bridge_mode != DRV8235_BRIDGE_COAST &&
+	    (config4 & required_control) == required_control &&
+	    raw_current <= DRV8235_IMTR_FULL_SCALE_CODE) {
 		result = drv8235_current_from_code(raw_current, config->imtr_full_scale_ua,
-						   telemetry->bridge_mode, &telemetry->current_ua);
+						   &reading.current_ua);
+		reading.current_valid = result == 0;
 	}
 	if (result == 0) {
-		result = drv8235_duty_from_code(telemetry->raw_duty, &telemetry->duty_permille);
+		result = drv8235_duty_from_code(reading.raw_duty, &reading.duty_permille);
 	}
 	if (result == 0) {
-		data->bridge_mode = telemetry->bridge_mode;
-		data->output_enabled = telemetry->output_enabled;
+		*telemetry = reading;
 	}
 	k_mutex_unlock(&data->lock);
 
@@ -317,10 +454,19 @@ int drv8235_get_faults(const struct device *dev, struct drv8235_faults *faults)
 	int result;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &raw);
+	result = drv8235_check_supply(config);
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &raw);
+	}
+	if (result == 0) {
+		(void)drv8235_decode_faults(raw, faults);
+		if (faults->power_on_reset) {
+			data->configured = false;
+		}
+	}
 	k_mutex_unlock(&data->lock);
 
-	return result == 0 ? drv8235_decode_faults(raw, faults) : result;
+	return result;
 }
 
 int drv8235_clear_faults(const struct device *dev)
@@ -332,13 +478,32 @@ int drv8235_clear_faults(const struct device *dev)
 	const struct drv8235_config *config = dev->config;
 	struct drv8235_data *data = dev->data;
 	uint8_t config0;
+	uint8_t fault;
 	int result;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &config0);
+	result = drv8235_check_supply(config);
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &fault);
+	}
+	if (result == 0 && (fault & BIT(1)) == 0U) {
+		data->configured = false;
+	}
+	/* Do not clear a latch while EN_OUT can still restart the coil. */
+	if (result == 0) {
+		result = drv8235_safe_locked(config, data);
+	} else {
+		(void)drv8235_safe_locked(config, data);
+	}
+	if (result == 0) {
+		result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &config0);
+	}
 	if (result == 0) {
 		result = drv8235_reg_write(config, DRV8235_REG_CONFIG0,
 					   config0 | DRV8235_CONFIG0_CLEAR_FAULT);
+	}
+	if (result != 0) {
+		data->configured = false;
 	}
 	k_mutex_unlock(&data->lock);
 
@@ -370,8 +535,9 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 	uint8_t inv_r;
 	int result;
 
+	data->configured = false;
 	if (config->max_output_uv == 0U || config->max_output_uv > DRV8235_TARGET_FULL_SCALE_UV ||
-	    config->imtr_full_scale_ua == 0U) {
+	    config->imtr_full_scale_ua == 0U || config->imtr_full_scale_ua > INT32_MAX) {
 		LOG_ERR("invalid devicetree limits");
 		return -EINVAL;
 	}
@@ -382,19 +548,31 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 		return result;
 	}
 
-	data->output_enabled = false;
-	data->target_code = 0U;
-	data->bridge_mode = DRV8235_BRIDGE_COAST;
+	result = drv8235_check_supply(config);
+	if (result != 0) {
+		return result;
+	}
 
 	/* A successful read also proves that a device ACKs this I2C address. */
 	result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &config0);
 	if (result != 0) {
 		return result;
 	}
-	config0 &= (uint8_t)~DRV8235_CONFIG0_ENABLE_OUTPUT;
+	/* A coil has no mechanical stall; retain overvoltage protection. */
+	config0 &= (uint8_t)~(DRV8235_CONFIG0_ENABLE_OUTPUT | DRV8235_CONFIG0_ENABLE_STALL);
 	result = drv8235_reg_write(config, DRV8235_REG_CONFIG0, config0);
 	if (result != 0) {
 		return result;
+	}
+	/* Do not touch EN_OUT-restricted settings until shutdown is confirmed. */
+	uint8_t readback;
+
+	result = drv8235_reg_read(config, DRV8235_REG_CONFIG0, &readback);
+	if (result != 0) {
+		return result;
+	}
+	if ((readback & DRV8235_CONFIG0_ENABLE_OUTPUT) != 0U) {
+		return -EIO;
 	}
 	result = drv8235_reg_write(config, DRV8235_REG_TARGET, 0U);
 	if (result != 0) {
@@ -405,7 +583,7 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 	if (result != 0) {
 		return result;
 	}
-	config4 &= (uint8_t)~DRV8235_CONFIG4_BRIDGE_MASK;
+	config4 &= (uint8_t)~(DRV8235_CONFIG4_BRIDGE_MASK | DRV8235_CONFIG4_STALL_REPORT);
 	config4 |= DRV8235_CONFIG4_PWM_MODE | DRV8235_CONFIG4_I2C_BRIDGE_CONTROL;
 	result = drv8235_reg_write(config, DRV8235_REG_CONFIG4, config4);
 	if (result != 0) {
@@ -416,7 +594,9 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 	if (result != 0) {
 		return result;
 	}
-	reg_ctrl0 = (reg_ctrl0 & (uint8_t)~DRV8235_REG_CTRL0_REGULATION_MASK) |
+	/* Deterministic coil commands: no motor soft-start/soft-stop ramp. */
+	reg_ctrl0 = (reg_ctrl0 & (uint8_t)~(DRV8235_REG_CTRL0_REGULATION_MASK |
+						 DRV8235_REG_CTRL0_SOFT_START)) |
 		    DRV8235_REG_CTRL0_VOLTAGE_REGULATION;
 	result = drv8235_reg_write(config, DRV8235_REG_REG_CTRL0, reg_ctrl0);
 	if (result != 0) {
@@ -427,8 +607,10 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 	if (result != 0) {
 		return result;
 	}
-	result = drv8235_reg_write(config, DRV8235_REG_CONFIG3,
-				   config3 | DRV8235_CONFIG3_INTERNAL_VREF);
+	/* OCP and TSD latch off until an explicit, disabled-output fault clear. */
+	config3 = (config3 & (uint8_t)~DRV8235_CONFIG3_AUTO_RETRY) |
+		  DRV8235_CONFIG3_INTERNAL_VREF;
+	result = drv8235_reg_write(config, DRV8235_REG_CONFIG3, config3);
 	if (result != 0) {
 		return result;
 	}
@@ -454,7 +636,19 @@ static int drv8235_configure_locked(const struct drv8235_config *config, struct 
 		return result;
 	}
 
-	return 0;
+	result = drv8235_verify_settings(config, NULL);
+	if (result == 0) {
+		struct drv8235_faults faults;
+		uint8_t raw;
+
+		result = drv8235_reg_read(config, DRV8235_REG_FAULT_STATUS, &raw);
+		if (result == 0) {
+			(void)drv8235_decode_faults(raw, &faults);
+			result = faults.any ? -EIO : 0;
+		}
+	}
+	data->configured = result == 0;
+	return result;
 }
 
 int drv8235_reconfigure(const struct device *dev)
@@ -467,12 +661,12 @@ int drv8235_reconfigure(const struct device *dev)
 	struct drv8235_data *data = dev->data;
 	int result;
 
-	if (!i2c_is_ready_dt(&config->bus)) {
-		return -ENODEV;
-	}
-
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = drv8235_configure_locked(config, data);
+	data->configured = false;
+	result = i2c_is_ready_dt(&config->bus) ? drv8235_configure_locked(config, data) : -ENODEV;
+	if (result != 0) {
+		(void)drv8235_safe_locked(config, data);
+	}
 	k_mutex_unlock(&data->lock);
 
 	return result;
@@ -485,16 +679,14 @@ static __maybe_unused int drv8235_init(const struct device *dev)
 	int result;
 
 	k_mutex_init(&data->lock);
-	data->output_enabled = false;
-	data->target_code = 0U;
-	data->bridge_mode = DRV8235_BRIDGE_COAST;
+	data->configured = false;
 
 	if (!i2c_is_ready_dt(&config->bus)) {
 		LOG_ERR("I2C bus is not ready");
 		return -ENODEV;
 	}
 
-	result = drv8235_configure_locked(config, data);
+	result = drv8235_reconfigure(dev);
 	if (result == 0) {
 		LOG_INF("ready at I2C 0x%02x; output disabled", config->bus.addr);
 	}
@@ -506,6 +698,7 @@ static __maybe_unused int drv8235_init(const struct device *dev)
 	static struct drv8235_data drv8235_data_##inst;                                            \
 	static const struct drv8235_config drv8235_config_##inst = {                               \
 		.bus = I2C_DT_SPEC_INST_GET(inst),                                                 \
+		.vm_supply = DEVICE_DT_GET(DT_INST_PHANDLE(inst, vm_supply)),                      \
 		.max_output_uv = DT_INST_PROP(inst, max_output_microvolt),                         \
 		.coil_resistance_milliohm = DT_INST_PROP(inst, coil_resistance_milliohm),          \
 		.imtr_full_scale_ua = DT_INST_PROP(inst, imtr_full_scale_microamp),                \

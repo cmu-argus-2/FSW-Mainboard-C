@@ -3,10 +3,12 @@
 #include <zephyr/dt-bindings/i2c/i2c.h>
 
 / {
-	test_coil_power: test-coil-power {
-		compatible = "regulator-fixed";
-		regulator-name = "test_coil_power";
-		regulator-always-on;
+	test_regulators {
+		compatible = "zephyr,fake-regulator";
+		test_coil_power: test-coil-power {
+			regulator-name = "test_coil_power";
+			regulator-boot-on;
+		};
 	};
 
 	i2c0: i2c@100 {

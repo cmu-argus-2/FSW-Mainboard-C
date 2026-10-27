@@ -45,11 +45,14 @@ int drv8235_voltage_to_code(int32_t voltage_uv, uint32_t max_output_uv, uint8_t 
 		return 0;
 	}
 
-	const uint64_t raw = rounded_divide(magnitude * DRV8235_TARGET_FULL_SCALE_CODE,
-					    DRV8235_TARGET_FULL_SCALE_UV);
+	const uint64_t max_code = (uint64_t)max_output_uv * DRV8235_TARGET_FULL_SCALE_CODE /
+				  DRV8235_TARGET_FULL_SCALE_UV;
+	const uint64_t raw = MIN(rounded_divide(magnitude * DRV8235_TARGET_FULL_SCALE_CODE,
+					      DRV8235_TARGET_FULL_SCALE_UV), max_code);
 
 	*code = (uint8_t)raw;
-	*mode = signed_command < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD;
+	*mode = raw == 0U ? DRV8235_BRIDGE_COAST
+			 : (signed_command < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD);
 	return 0;
 }
 
@@ -59,8 +62,8 @@ int drv8235_voltage_from_code(uint8_t code, enum drv8235_bridge_mode mode, int32
 		return -EINVAL;
 	}
 
-	int64_t value = (int64_t)rounded_divide((uint64_t)code * DRV8235_TARGET_FULL_SCALE_UV,
-						DRV8235_TARGET_FULL_SCALE_CODE);
+	int64_t value = (int64_t)rounded_divide((uint64_t)code * DRV8235_VMTR_REFERENCE_UV,
+							DRV8235_VMTR_REFERENCE_CODE);
 
 	if (mode == DRV8235_BRIDGE_COAST || mode == DRV8235_BRIDGE_BRAKE) {
 		value = 0;
@@ -72,27 +75,18 @@ int drv8235_voltage_from_code(uint8_t code, enum drv8235_bridge_mode mode, int32
 	return 0;
 }
 
-int drv8235_current_from_code(uint8_t code, uint32_t full_scale_ua, enum drv8235_bridge_mode mode,
-			      int32_t *current_ua)
+int drv8235_current_from_code(uint8_t code, uint32_t full_scale_ua, uint32_t *current_ua)
 {
-	if (current_ua == NULL || full_scale_ua == 0U || full_scale_ua > INT32_MAX ||
-	    !mode_is_valid(mode)) {
+	if (current_ua == NULL || full_scale_ua == 0U || full_scale_ua > INT32_MAX) {
 		return -EINVAL;
 	}
 	if (code > DRV8235_IMTR_FULL_SCALE_CODE) {
 		return -ERANGE;
 	}
 
-	int64_t value = (int64_t)rounded_divide((uint64_t)code * full_scale_ua,
-						DRV8235_IMTR_FULL_SCALE_CODE);
-
-	if (mode == DRV8235_BRIDGE_COAST || mode == DRV8235_BRIDGE_BRAKE) {
-		value = 0;
-	} else {
-		value *= direction_sign(mode);
-	}
-
-	*current_ua = (int32_t)value;
+	/* IMTR carries magnitude only; bridge commands cannot provide a measured sign. */
+	*current_ua = (uint32_t)rounded_divide((uint64_t)code * full_scale_ua,
+					      DRV8235_IMTR_FULL_SCALE_CODE);
 	return 0;
 }
 
@@ -117,12 +111,14 @@ int drv8235_decode_faults(uint8_t raw, struct drv8235_faults *faults)
 	}
 
 	faults->raw = raw;
-	faults->any = (raw & BIT(7)) != 0U;
 	faults->stall = (raw & BIT(5)) != 0U;
 	faults->overcurrent = (raw & BIT(4)) != 0U;
 	faults->overvoltage = (raw & BIT(3)) != 0U;
 	faults->thermal_shutdown = (raw & BIT(2)) != 0U;
-	faults->undervoltage_lockout = (raw & BIT(1)) != 0U;
+	faults->power_on_reset = (raw & BIT(1)) == 0U;
+	/* Include latched event bits even if the aggregate FAULT bit has recovered. */
+	faults->any = (raw & (BIT(7) | BIT(5) | BIT(4) | BIT(3) | BIT(2))) != 0U ||
+		      faults->power_on_reset;
 	return 0;
 }
 

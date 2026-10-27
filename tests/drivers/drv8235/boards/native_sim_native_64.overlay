@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 / {
-	test_coil_power: test-coil-power {
-		compatible = "regulator-fixed";
-		regulator-name = "test_coil_power";
-		regulator-always-on;
+	test_regulators {
+		compatible = "zephyr,fake-regulator";
+		test_coil_power: test-coil-power {
+			regulator-name = "test_coil_power";
+			regulator-boot-on;
+		};
 	};
 };
 

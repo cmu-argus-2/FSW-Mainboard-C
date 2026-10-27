@@ -117,5 +117,11 @@ The driver starts every H-bridge disabled, with target zero and coast selected.
 It enforces the board's 6 V command limit, preserves latched faults until the
 caller explicitly clears them, and does not control the shared `COIL_EN` rail.
 
+Coil-current telemetry is an unsigned magnitude with a `current_valid` flag:
+enabled brake can retain nonzero current; coast and disabled outputs cannot
+claim a valid zero-current measurement. Current calibration remains provisional.
+Unlike Python's zero-throttle brake, `set_output_uv(0)` selects coast; call
+`drv8235_brake()` explicitly for brake.
+
 The interactive board test, build/flash steps, expected output, and safe manual
 test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).

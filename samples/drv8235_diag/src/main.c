@@ -20,6 +20,7 @@
 #include <zephyr/sys/util.h>
 
 #include "argus/drivers/drv8235.h"
+#include "safety.h"
 
 struct torque_axis {
 	const char *name;
@@ -100,6 +101,22 @@ static int disarm_all(void)
 	return first_error;
 }
 
+static int stop_axis(const struct shell *sh, const struct torque_axis *axis)
+{
+	const int result = drv8235_diag_stop_axis(axis->dev, coil_power, &rail_armed);
+
+	if (result != 0) {
+		if (regulator_is_enabled(coil_power)) {
+			shell_error(sh, "%s disable failed (%d); COIL_EN shutdown also failed; "
+				    "REMOVE EXTERNAL POWER", axis->name, result);
+		} else {
+			shell_error(sh, "%s disable failed (%d); shared COIL_EN is now OFF",
+				    axis->name, result);
+		}
+	}
+	return result;
+}
+
 static void print_axis_status(const struct shell *sh, const struct torque_axis *axis)
 {
 	struct drv8235_telemetry telemetry;
@@ -130,13 +147,22 @@ static void print_axis_status(const struct shell *sh, const struct torque_axis *
 		return;
 	}
 
+	char current_text[48];
+
+	if (telemetry.current_valid) {
+		snprintk(current_text, sizeof(current_text), "%" PRIu32 "mA (provisional)",
+			 telemetry.current_ua / 1000U);
+	} else {
+		snprintk(current_text, sizeof(current_text), "UNAVAILABLE(raw=0x%02x)",
+			 telemetry.raw_current);
+	}
 	shell_print(sh,
-		    "%s: ready enabled=%s mode=%s voltage=%" PRId32 "mV current=%" PRId32
-		    "mA duty=%u.%u%% fault=0x%02x "
+		    "%s: ready enabled=%s mode=%s voltage=%" PRId32 "mV coil_current_abs=%s "
+		    "duty=%u.%u%% fault=0x%02x "
 		    "limit=%" PRIu32 "mV",
 		    axis->name, telemetry.output_enabled ? "yes" : "no",
 		    bridge_mode_name(telemetry.bridge_mode), telemetry.voltage_uv / 1000,
-		    telemetry.current_ua / 1000, telemetry.duty_permille / 10,
+		    current_text, telemetry.duty_permille / 10,
 		    telemetry.duty_permille % 10, faults.raw, limits.max_output_uv / 1000);
 }
 
@@ -200,10 +226,10 @@ static int cmd_arm(const struct shell *sh, size_t argc, char **argv)
 		}
 	}
 
-	int result = regulator_enable(coil_power);
+	int result = drv8235_diag_enable_rail(coil_power);
 
 	if (result != 0) {
-		shell_error(sh, "could not enable COIL_EN (%d)", result);
+		shell_error(sh, "could not enable COIL_EN (%d); if still ON, disarm first", result);
 		return result;
 	}
 
@@ -260,33 +286,36 @@ static int cmd_pulse(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 
+	shell_warn(sh, "%s pulse requested at %ld mV for %ld ms", axis->name, millivolts,
+		   duration_ms);
 	int result = drv8235_set_output_uv(axis->dev, (int32_t)millivolts * 1000);
+	const int64_t deadline = k_uptime_get() + duration_ms;
 
 	if (result == 0) {
 		result = drv8235_set_enabled(axis->dev, true);
 	}
 	if (result != 0) {
-		(void)make_axis_safe(axis);
-		shell_error(sh, "%s command failed (%d); axis made safe", axis->name, result);
+		(void)stop_axis(sh, axis);
+		shell_error(sh, "%s command failed (%d)", axis->name, result);
 		return result;
 	}
 
-	shell_warn(sh, "%s ACTIVE at requested %ld mV for at most %ld ms", axis->name, millivolts,
-		   duration_ms);
-	long elapsed_ms = 0;
+	/* Use wall time: I2C and console work also consume the requested duration. */
 	bool printed_status = false;
 
-	while (elapsed_ms < duration_ms) {
+	while (k_uptime_get() < deadline) {
 		struct drv8235_faults faults;
-		const long slice_ms = MIN(50L, duration_ms - elapsed_ms);
+		const int64_t remaining_ms = deadline - k_uptime_get();
 
-		k_msleep(slice_ms);
-		elapsed_ms += slice_ms;
+		if (remaining_ms <= 0) {
+			break;
+		}
+		k_msleep((int32_t)MIN(50LL, remaining_ms));
 		result = drv8235_get_faults(axis->dev, &faults);
 		if (result != 0 || faults.any) {
-			(void)make_axis_safe(axis);
-			shell_error(sh, "%s pulse aborted at %ld ms (result=%d fault=0x%02x)",
-				    axis->name, elapsed_ms, result, result == 0 ? faults.raw : 0U);
+			(void)stop_axis(sh, axis);
+			shell_error(sh, "%s pulse aborted (result=%d fault=0x%02x)",
+				    axis->name, result, result == 0 ? faults.raw : 0U);
 			return result != 0 ? result : -EIO;
 		}
 		if (!printed_status) {
@@ -295,11 +324,8 @@ static int cmd_pulse(const struct shell *sh, size_t argc, char **argv)
 		}
 	}
 
-	result = make_axis_safe(axis);
+	result = stop_axis(sh, axis);
 	if (result != 0) {
-		shell_error(sh, "%s pulse ended but safe-state write failed (%d)", axis->name,
-			    result);
-		(void)disarm_all();
 		return result;
 	}
 
@@ -317,7 +343,7 @@ static int cmd_coast(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 
-	const int result = make_axis_safe(axis);
+	const int result = stop_axis(sh, axis);
 
 	if (result == 0) {
 		shell_print(sh, "%s disabled and coasting", axis->name);
@@ -335,7 +361,9 @@ static int cmd_disarm(const struct shell *sh, size_t argc, char **argv)
 	if (result == 0) {
 		shell_print(sh, "COIL_EN off; all bridges disabled and coasting");
 	} else {
-		shell_error(sh, "COIL_EN is off, but an I2C safe-state write failed (%d)", result);
+		shell_error(sh, "disarm failed (%d); COIL_EN is %s", result,
+			    regulator_is_enabled(coil_power) ? "STILL ON: REMOVE EXTERNAL POWER"
+							     : "OFF");
 	}
 	return result;
 }
@@ -362,7 +390,11 @@ int main(void)
 
 	const int result = disarm_all();
 	printk("\nArgus DRV8235 diagnostic\n");
-	printk("SAFE START: COIL_EN is OFF; all responding bridges are disabled\n");
+	if (regulator_is_enabled(coil_power)) {
+		printk("UNSAFE START: COIL_EN did not turn off; REMOVE EXTERNAL POWER\n");
+		return -EIO;
+	}
+	printk("SAFE START: COIL_EN is OFF; bridge disable was attempted before power-off\n");
 	printk("Run 'drv8235 list', then arm before reading live status\n");
 	printk("Run 'drv8235 help' for commands\n");
 	if (result != 0) {

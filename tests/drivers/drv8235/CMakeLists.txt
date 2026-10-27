@@ -10,6 +10,7 @@ project(drv8235_tests)
 target_sources(app PRIVATE
         src/main.c
         src/hardware.c
+        src/diagnostic.c
         src/drv8235_emul.c
         ../../../src/drivers/drv8235.c
         ../../../src/drivers/drv8235_common.c
