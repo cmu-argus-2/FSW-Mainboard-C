@@ -73,6 +73,7 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 | `cmake/` | Build helpers (git version header printed at boot) |
 | `src/`, `include/argus/` | Application code |
 | `tests/`, `test_vectors/` | Tests |
+| `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
 
 ## Hardware revisions
 
@@ -109,3 +110,18 @@ so a v5 build can never silently use v4 pins.
 - `PERIPH_PWR_EN` (GPIO42) must be driven high before anything on I2C0/I2C1 responds.
 - `WDT_EN` (GPIO15) arms the external watchdog; once armed, `WDT_WDI` (GPIO2) must be toggled or the board resets. Nothing drives it by default.
 - Polarity of the `*_FLT` and `BATT_ALRT` inputs has not been checked against the schematic.
+
+## DRV8235 magnetorquer driver
+
+The driver starts every H-bridge disabled, with target zero and coast selected.
+It enforces the board's 6 V command limit, preserves latched faults until the
+caller explicitly clears them, and does not control the shared `COIL_EN` rail.
+
+Coil-current telemetry is an unsigned magnitude with a `current_valid` flag:
+enabled brake can retain nonzero current; coast and disabled outputs cannot
+claim a valid zero-current measurement. Current calibration remains provisional.
+Unlike Python's zero-throttle brake, `set_output_uv(0)` selects coast; call
+`drv8235_brake()` explicitly for brake.
+
+The interactive board test, build/flash steps, expected output, and safe manual
+test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).
