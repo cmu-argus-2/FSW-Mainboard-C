@@ -95,14 +95,14 @@ static int max17205_get_prop(const struct device *dev, fuel_gauge_prop_t prop, u
         rc = max17205_read(&cfg->main, MAX17205_REPCAP_ADDR, &raw);
         if (rc == 0)
         {
-            val->remaining_capacity_uah = (uint32_t)((uint64_t)raw * 5000000 / cfg->sense_ohm); /* 5 uVh / Rsense */
+            val->remaining_capacity_uah = (uint32_t)((uint64_t)raw * 5000000 / cfg->sense_uohm); /* 5 uVh / Rsense */
         }
         return rc;
     case FUEL_GAUGE_CURRENT_UA:
         rc = max17205_read(&cfg->main, MAX17205_CURRENT_ADDR, &raw);
         if (rc == 0)
         {
-            val->current_ua = (int32_t)((int64_t)(int16_t)raw * 1562500 / cfg->sense_ohm);
+            val->current_ua = (int32_t)((int64_t)(int16_t)raw * 1562500 / cfg->sense_uohm);
         }
         return rc;
     case FUEL_GAUGE_VOLTAGE_UV:
@@ -198,7 +198,7 @@ static DEVICE_API(fuel_gauge, max17205_api) = {
         .main = I2C_DT_SPEC_INST_GET(inst),                        \
         .shadow = {.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),        \
                    .addr = MAX17205_SHADOW_I2C_ADDR},              \
-        .sense_ohm = DT_INST_PROP(inst, rsense_micro_ohms),        \
+        .sense_uohm = DT_INST_PROP(inst, rsense_micro_ohms),        \
     };                                                             \
     DEVICE_DT_INST_DEFINE(inst, max17205_init, NULL, NULL,         \
                           &max17205_config_##inst, POST_KERNEL,    \
