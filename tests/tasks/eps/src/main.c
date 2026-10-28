@@ -355,4 +355,29 @@ ZTEST(eps, test_csv_handles_extreme_values_and_rejects_small_buffers)
 	zassert_equal(eps_format_record(line, sizeof(line), true, values, 43), -EINVAL);
 }
 
+ZTEST(eps, test_console_only_provider_reports_unavailable_without_fake_measurements)
+{
+	const struct eps_io *unconnected = eps_console_only_io();
+	struct eps_vi reading = {123, 456};
+	struct eps_fuel pack = {.soc_pct = 55};
+	int32_t temperature = 999;
+
+	zassert_equal(unconnected->read_monitor(NULL, EPS_MAIN, &reading), -ENODEV);
+	zassert_equal(unconnected->read_coil(NULL, EPS_XP, &reading), -ENODEV);
+	zassert_equal(unconnected->read_fuel(NULL, &pack), -ENODEV);
+	zassert_equal(unconnected->read_cpu_temp(NULL, &temperature), -ENODEV);
+	zassert_equal(unconnected->set_heaters(NULL, true, true), -ENODEV);
+	zassert_equal(reading.mv, 123);
+	zassert_equal(pack.soc_pct, 55);
+	zassert_equal(temperature, 999);
+	for (int i = 1; i <= 5; ++i) {
+		(void)eps_step(&state, unconnected, i);
+	}
+	zassert_equal(state.fields[EPS_TIME], 5);
+	zassert_equal(state.fields[EPS_SOC_PCT], 0);
+	zassert_equal(state.power_flag, EPS_NONE);
+	zassert_false(state.heater1);
+	zassert_false(state.heater2);
+}
+
 ZTEST_SUITE(eps, NULL, NULL, before, NULL, NULL);

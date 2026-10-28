@@ -91,7 +91,15 @@ int32_t eps_shadow_temperature_cc(uint16_t raw);
 int eps_format_record(char *buffer, size_t size, bool full, const int32_t *fields,
 		      size_t count);
 
-/* Zephyr adapter: boot-time device availability and GPIO setup. */
-const struct eps_io *eps_zephyr_init(void);
+/* Run the task at 1 Hz using hardware callbacks supplied by integration code.
+ * Driver implementations and hardware initialization are outside this module.
+ */
+void eps_run(const struct eps_io *io);
+
+/* Explicit console-only bring-up: all hardware operations return -ENODEV.
+ * Does not fabricate measurements or actuate heaters. Replace this I/O provider
+ * with real driver callbacks when the separate hardware integration is ready.
+ */
+const struct eps_io *eps_console_only_io(void);
 
 #endif

@@ -1,4 +1,0 @@
-/* native_sim already has an emulated I2C controller at i2c0 */
-&i2c0 {
-#include "../max17205_nodes.dtsi"
-};
