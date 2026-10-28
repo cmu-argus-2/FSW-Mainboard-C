@@ -1,0 +1,94 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	test_gpio: gpio-emulator {
+		compatible = "zephyr,gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <3>;
+	};
+	zephyr,user {
+		heat-en-gpios = <&test_gpio 0 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&test_gpio 1 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&test_gpio 2 GPIO_ACTIVE_HIGH>;
+	};
+	die_temp: test-temperature { compatible = "zephyr,eps-test-temperature"; };
+
+	test_regulators {
+		compatible = "zephyr,fake-regulator";
+		test_coil_power: test-coil-power {
+			regulator-name = "test_coil_power";
+			regulator-boot-on;
+		};
+	};
+
+	eps_i2c0: i2c@100 {
+		compatible = "zephyr,i2c-emul-controller";
+		reg = <0x100 4>;
+		clock-frequency = <I2C_BITRATE_FAST>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+		torque_xm: torque-xm@30 {
+			compatible = "ti,drv8235"; reg = <0x30>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+		torque_ym: torque-ym@31 {
+			compatible = "ti,drv8235"; reg = <0x31>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+		torque_zm: torque-zm@33 {
+			compatible = "ti,drv8235"; reg = <0x33>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+	};
+	eps_i2c1: i2c@200 {
+		compatible = "zephyr,i2c-emul-controller";
+		reg = <0x200 4>;
+		clock-frequency = <I2C_BITRATE_FAST>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+		main_power_monitor: adm1176@40 {
+			compatible = "adi,adm1176"; reg = <0x40>; rshunt-micro-ohms = <10000>;
+		};
+		gps_power_monitor: adm1176@41 {
+			compatible = "adi,adm1176"; reg = <0x41>; rshunt-micro-ohms = <10000>;
+		};
+		radio_power_monitor: adm1176@42 {
+			compatible = "adi,adm1176"; reg = <0x42>; rshunt-micro-ohms = <10000>;
+		};
+		jetson_power_monitor: adm1176@46 {
+			compatible = "adi,adm1176"; reg = <0x46>; rshunt-micro-ohms = <10000>;
+		};
+		fuel_gauge: max17205@36 {
+			compatible = "maxim,max17205"; reg = <0x36>; rsense-micro-ohms = <10000>;
+		};
+		torque_xp: torque-xp@30 {
+			compatible = "ti,drv8235"; reg = <0x30>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+		torque_yp: torque-yp@31 {
+			compatible = "ti,drv8235"; reg = <0x31>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+		torque_zp: torque-zp@33 {
+			compatible = "ti,drv8235"; reg = <0x33>;
+			max-output-microvolt = <6000000>; coil-resistance-milliohm = <25000>;
+			imtr-full-scale-microamp = <3700000>;
+			vm-supply = <&test_coil_power>;
+		};
+	};
+};

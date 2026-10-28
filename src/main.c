@@ -1,30 +1,28 @@
 #include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/led_strip.h>
 #include <zephyr/sys/printk.h>
 
+#include "argus/tasks/eps.h"
 #include "argus_version.h"
-
-static const struct device *const neopixel = DEVICE_DT_GET(DT_ALIAS(led_strip));
-
-static const struct led_rgb colors[] = {
-	{ .r = 0x10 }, { .g = 0x10 }, { .b = 0x10 }, { 0 },
-};
 
 int main(void)
 {
 	printk("Argus FSW mainboard rev %s (%s)\n", CONFIG_BOARD_REVISION, ARGUS_GIT_VERSION);
+	static struct eps_state state;
+	const struct eps_io *io = eps_zephyr_init();
 
-	if (!device_is_ready(neopixel)) {
-		printk("neopixel not ready\n");
-		return 0;
-	}
+	eps_init(&state);
+	printk("EPS 1 Hz; time is monotonic seconds since boot; full record every fifth run\n");
+	int64_t next_run = k_uptime_get();
 
-	for (unsigned int i = 0;; i++) {
-		struct led_rgb pixel = colors[i % ARRAY_SIZE(colors)];
+	for (;;) {
+		(void)eps_step(&state, io, (int32_t)(k_uptime_get() / 1000));
+		next_run += 1000;
+		/* Do not accumulate execution-time drift or burst through missed ticks. */
+		int64_t now = k_uptime_get();
 
-		led_strip_update_rgb(neopixel, &pixel, 1);
-		printk("argus alive, tick %u\n", i);
-		k_msleep(500);
+		if (next_run <= now) {
+			next_run += ((now - next_run) / 1000 + 1) * 1000;
+		}
+		k_sleep(K_TIMEOUT_ABS_MS(next_run));
 	}
 }

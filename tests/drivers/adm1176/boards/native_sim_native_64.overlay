@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+&i2c0 {
+	adm1176_test: adm1176@40 {
+		compatible = "adi,adm1176";
+		reg = <0x40>;
+		rshunt-micro-ohms = <10000>;
+		status = "okay";
+	};
+};

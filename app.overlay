@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* EPS consumes the SoC die-temperature sensor via the ADC. */
+&adc {
+	status = "okay";
+};
+
+&die_temp {
+	status = "okay";
+};

@@ -9,7 +9,18 @@ project(FSW-Mainboard-C)
 
 target_sources(app PRIVATE
         src/main.c
+        src/tasks/eps.c
+        src/tasks/eps_zephyr.c
 )
+
+# Build existing driver dependencies only when the board/application enables
+# their device nodes. EPS does not define or migrate the board's hardware map.
+target_sources_ifdef(CONFIG_DT_HAS_ADI_ADM1176_ENABLED app PRIVATE
+        src/drivers/adm1176.c src/drivers/adm1176_common.c)
+target_sources_ifdef(CONFIG_DT_HAS_TI_DRV8235_ENABLED app PRIVATE
+        src/drivers/drv8235.c src/drivers/drv8235_common.c)
+target_sources_ifdef(CONFIG_DT_HAS_MAXIM_MAX17205_ENABLED app PRIVATE
+        src/drivers/max17205.c)
 
 target_include_directories(app PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/include
