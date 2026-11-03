@@ -1,0 +1,19 @@
+/*
+ * OPT4003 nodes for the test, included inside an emulated I2C bus by each
+ * board overlay in boards/. Each node gets both a driver instance and a fake
+ * sensor (src/opt4003_emul.c), matched by compatible.
+ */
+
+/* Configured like the Argus sensors in argus.dtsi */
+light: opt4003@44 {
+	compatible = "ti,opt4003";
+	reg = <0x44>;
+	conversion-time = <0>;
+};
+
+/* Not initialized at boot, so a test can choose its device ID first and then call device_init() */
+light_deferred: opt4003@45 {
+	compatible = "ti,opt4003";
+	reg = <0x45>;
+	zephyr,deferred-init;
+};
