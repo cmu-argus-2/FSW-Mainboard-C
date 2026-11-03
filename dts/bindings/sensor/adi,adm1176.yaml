@@ -5,8 +5,8 @@ description: |
   Analog Devices ADM1176 hot-swap controller and I2C power monitor.
 
   The device measures bus voltage and the voltage across an external shunt
-  resistor with a 12-bit ADC. The driver exposes voltage, current, and
-  calculated power through Zephyr's sensor API.
+  resistor with a 12-bit ADC. The driver exposes voltage and current through
+  Zephyr's sensor API.
 
 compatible: "adi,adm1176"
 

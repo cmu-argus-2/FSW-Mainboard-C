@@ -12,7 +12,6 @@ project(adm1176_diag)
 target_sources(app PRIVATE
         src/main.c
         ${ARGUS_ROOT}/src/drivers/adm1176.c
-        ${ARGUS_ROOT}/src/drivers/adm1176_common.c
 )
 
 target_include_directories(app PRIVATE ${ARGUS_ROOT}/include)

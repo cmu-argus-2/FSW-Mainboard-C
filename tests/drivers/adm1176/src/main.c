@@ -1,193 +1,204 @@
-/*
- * Copyright (c) 2026 Carnegie Mellon University
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 #include <errno.h>
-#include <stdint.h>
-
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/ztest.h>
-
+#include "adm1176_emul.h"
 #include "argus/drivers/adm1176.h"
 
-#define TEST_RSHUNT_UOHM 10000U
-#define TEST_FULL_SCALE_CURRENT_UA 10584000ULL
+static const struct device *const dev = DEVICE_DT_GET(DT_NODELABEL(adm1176_test));
+static const struct emul *const emul = EMUL_DT_GET(DT_NODELABEL(adm1176_test));
+static struct adm1176_emul_state *s;
 
-ZTEST(adm1176, test_decode_rejects_invalid_arguments)
+static void *setup(void)
 {
-	const uint8_t buffer[3] = {0};
-	struct adm1176_sample sample;
-
-	zassert_equal(adm1176_decode_measurement(NULL, TEST_RSHUNT_UOHM,
-						 ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-						 &sample), -EINVAL);
-	zassert_equal(adm1176_decode_measurement(buffer, 0U,
-						 ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-						 &sample), -EINVAL);
-	zassert_equal(adm1176_decode_measurement(buffer, TEST_RSHUNT_UOHM, 1U,
-						 &sample), -EINVAL);
-	zassert_equal(adm1176_decode_measurement(buffer, TEST_RSHUNT_UOHM,
-						 ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-						 NULL), -EINVAL);
+	s = adm1176_emul_state(emul);
+	zassert_true(device_is_ready(dev));
+	zassert_equal(s->command, 0x05);
+	zassert_equal(s->alert_enable, 0x04);
+	zassert_equal(s->control, 0);
+	zassert_equal(adm1176_overcurrent_level(dev), 0xFF);
+	return NULL;
 }
 
-ZTEST(adm1176, test_decode_zero_sample)
+static void before(void *fixture)
 {
-	const uint8_t buffer[3] = {0};
-	struct adm1176_sample sample;
-
-	zassert_ok(adm1176_decode_measurement(
-		buffer, TEST_RSHUNT_UOHM, ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-		&sample));
-	zassert_equal(sample.raw_voltage, 0U);
-	zassert_equal(sample.raw_current, 0U);
-	zassert_equal(sample.voltage_uv, 0U);
-	zassert_equal(sample.current_ua, 0U);
-	zassert_equal(sample.power_uw, 0U);
+	ARG_UNUSED(fixture);
+	adm1176_emul_reset(emul);
+	zassert_ok(adm1176_config(dev, ADM1176_V_CONT | ADM1176_I_CONT));
+	zassert_ok(adm1176_set_overcurrent_level(dev, 0xFF));
 }
 
-ZTEST(adm1176, test_decode_packs_nibbles_in_datasheet_order)
+ZTEST(adm1176, test_voltage_current_and_12_bit_decode)
 {
-	const uint8_t buffer[3] = {0x12, 0x34, 0xAB};
-	struct adm1176_sample sample;
+	struct sensor_value value;
 
-	zassert_ok(adm1176_decode_measurement(
-		buffer, TEST_RSHUNT_UOHM, ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-		&sample));
-	zassert_equal(sample.raw_voltage, 0x12AU);
-	zassert_equal(sample.raw_current, 0x34BU);
+	s->sample[0] = 0x80;
+	s->sample[1] = 0x40; /* Regression: widen the high byte before shifting. */
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value));
+	zassert_equal(sensor_value_to_micro(&value), 13175000);
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_CURRENT, &value));
+	zassert_equal(sensor_value_to_micro(&value), 2646000);
+	s->sample[0] = 0xFF;
+	s->sample[1] = 0xFF;
+	s->sample[2] = 0xFF;
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value));
+	zassert_equal(sensor_value_to_micro(&value), 26343566);
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_CURRENT, &value));
+	zassert_equal(sensor_value_to_micro(&value), 10581416);
 }
 
-ZTEST(adm1176, test_decode_high_range_full_scale_code)
+ZTEST(adm1176, test_low_range_and_once_configuration)
 {
-	const uint8_t buffer[3] = {0xFF, 0xFF, 0xFF};
-	struct adm1176_sample sample;
+	struct sensor_value value;
 
-	zassert_ok(adm1176_decode_measurement(
-		buffer, TEST_RSHUNT_UOHM, ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-		&sample));
-	zassert_equal(sample.raw_voltage, 4095U);
-	zassert_equal(sample.raw_current, 4095U);
-	zassert_within(sample.voltage_uv, 26343567ULL, 1ULL);
-	zassert_within(sample.current_ua, 10581416ULL, 1ULL);
+	zassert_ok(adm1176_config(dev, ADM1176_V_ONCE | ADM1176_I_ONCE | ADM1176_VRANGE));
+	zassert_equal(s->command, 0x1A);
+	s->sample[0] = 0x80;
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value));
+	zassert_equal(sensor_value_to_micro(&value), 3325000);
 }
 
-ZTEST(adm1176, test_decode_low_voltage_range)
+ZTEST(adm1176, test_single_channel_read_formats)
 {
-	const uint8_t buffer[3] = {0x80, 0x00, 0x00};
-	struct adm1176_sample sample;
+	struct sensor_value value;
 
-	zassert_ok(adm1176_decode_measurement(
-		buffer, TEST_RSHUNT_UOHM, ADM1176_VOLTAGE_FULL_SCALE_LOW_UV,
-		&sample));
-	zassert_equal(sample.raw_voltage, 2048U);
-	zassert_equal(sample.voltage_uv, 3325000ULL);
+	s->sample[0] = 0x80;
+	s->sample[1] = 0x40;
+	s->sample[2] = 0xAB;
+	zassert_ok(adm1176_config(dev, ADM1176_V_CONT));
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value));
+	zassert_equal(sensor_value_to_micro(&value), 13239331);
+	zassert_equal(sensor_channel_get(dev, SENSOR_CHAN_CURRENT, &value), -ENOTSUP);
+	zassert_ok(adm1176_config(dev, ADM1176_I_CONT));
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_CURRENT, &value));
+	zassert_equal(sensor_value_to_micro(&value), 2674423);
 }
 
-ZTEST(adm1176, test_decode_calculates_power)
+ZTEST(adm1176, test_status_preserves_measurement_configuration)
 {
-	const uint8_t buffer[3] = {0x80, 0x40, 0x00};
-	struct adm1176_sample sample;
+	uint8_t status;
 
-	zassert_ok(adm1176_decode_measurement(
-		buffer, TEST_RSHUNT_UOHM, ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV,
-		&sample));
-	zassert_equal(sample.voltage_uv, 13175000ULL);
-	zassert_equal(sample.current_ua, 2646000ULL);
-	zassert_equal(sample.power_uw, 34861050ULL);
+	zassert_ok(adm1176_config(dev, 0x15));
+	s->status = 0x3F;
+	zassert_ok(adm1176_status(dev, &status));
+	zassert_equal(status, 0x3F);
+	zassert_equal(s->command, 0x15);
 }
 
-ZTEST(adm1176, test_status_rejects_null_output)
+ZTEST(adm1176, test_output_switching_and_i2c_error)
 {
-	zassert_equal(adm1176_decode_status(0U, NULL), -EINVAL);
+	bool on;
+
+	zassert_ok(adm1176_set_device_on(dev, false));
+	zassert_equal(s->control, 1);
+	zassert_ok(adm1176_device_on(dev, &on));
+	zassert_false(on);
+	zassert_ok(adm1176_set_device_on(dev, true));
+	zassert_equal(s->command, 0x05);
+	zassert_ok(adm1176_device_on(dev, &on));
+	zassert_true(on);
+	s->error = -EIO;
+	zassert_equal(adm1176_set_device_on(dev, false), -EIO);
+	zassert_equal(s->control, 0);
 }
 
-ZTEST(adm1176, test_status_decodes_each_flag)
+ZTEST(adm1176, test_raw_threshold_and_clear)
 {
-	struct adm1176_status_flags status;
-
-	zassert_ok(adm1176_decode_status(0x3FU, &status));
-	zassert_equal(status.raw, 0x3FU);
-	zassert_true(status.adc_overcurrent);
-	zassert_true(status.adc_alert);
-	zassert_true(status.hot_swap_overcurrent);
-	zassert_true(status.hot_swap_alert);
-	zassert_true(status.output_off);
-	zassert_true(status.output_off_alert);
+	zassert_ok(adm1176_set_overcurrent_level(dev, 128));
+	zassert_equal(s->threshold, 128);
+	zassert_equal(adm1176_overcurrent_level(dev), 128);
+	s->status = 0x2A;
+	zassert_ok(adm1176_clear(dev));
+	zassert_equal(s->status, 0);
+	zassert_equal(s->alert_enable, 0x06);
+	zassert_equal(adm1176_overcurrent_level(dev), 128);
 }
 
-ZTEST(adm1176, test_status_leaves_unset_flags_false)
+ZTEST(adm1176, test_rejects_invalid_config_and_unsupported_channels)
 {
-	struct adm1176_status_flags status;
+	struct sensor_value value;
 
-	zassert_ok(adm1176_decode_status(ADM1176_STATUS_ADC_ALERT, &status));
-	zassert_false(status.adc_overcurrent);
-	zassert_true(status.adc_alert);
-	zassert_false(status.hot_swap_overcurrent);
-	zassert_false(status.hot_swap_alert);
-	zassert_false(status.output_off);
-	zassert_false(status.output_off_alert);
+	zassert_equal(adm1176_config(dev, 0x40), -EINVAL);
+	zassert_equal(s->command, 0x05);
+	zassert_equal(sensor_sample_fetch_chan(dev, SENSOR_CHAN_POWER), -ENOTSUP);
+	zassert_equal(sensor_channel_get(dev, SENSOR_CHAN_POWER, &value), -ENOTSUP);
+	s->error = -EIO;
+	zassert_equal(adm1176_config(dev, 0x15), -EIO);
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_equal(s->command, 0x05);
+	zassert_ok(adm1176_config(dev, 0));
+	zassert_equal(sensor_sample_fetch(dev), -ENOTSUP);
 }
 
-ZTEST(adm1176, test_threshold_rejects_invalid_arguments)
+ZTEST(adm1176, test_failed_sample_invalidates_cache_and_recovers)
 {
-	uint8_t threshold;
-	uint64_t current_ua;
+	struct sensor_value value;
 
-	zassert_equal(adm1176_threshold_from_microamps(0U, 0U, &threshold),
-		      -EINVAL);
-	zassert_equal(adm1176_threshold_from_microamps(0U, TEST_RSHUNT_UOHM,
-						      NULL), -EINVAL);
-	zassert_equal(adm1176_threshold_to_microamps(0U, 0U, &current_ua),
-		      -EINVAL);
-	zassert_equal(adm1176_threshold_to_microamps(0U, TEST_RSHUNT_UOHM,
-						    NULL), -EINVAL);
+	zassert_equal(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value), -ENODATA);
+	zassert_ok(sensor_sample_fetch(dev));
+	s->error = -EIO;
+	zassert_equal(sensor_sample_fetch(dev), -EIO);
+	zassert_equal(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value), -ENODATA);
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_ok(sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &value));
 }
 
-ZTEST(adm1176, test_threshold_zero)
+ZTEST(adm1176, test_status_restore_failure_recovers_on_next_sample)
 {
-	uint8_t threshold = UINT8_MAX;
-	uint64_t current_ua = UINT64_MAX;
+	uint8_t status;
 
-	zassert_ok(adm1176_threshold_from_microamps(0U, TEST_RSHUNT_UOHM,
-						    &threshold));
-	zassert_equal(threshold, 0U);
-	zassert_ok(adm1176_threshold_to_microamps(0U, TEST_RSHUNT_UOHM,
-						  &current_ua));
-	zassert_equal(current_ua, 0U);
+	s->error = -EIO;
+	s->skip = 2;
+	zassert_equal(adm1176_status(dev, &status), -EIO);
+	zassert_equal(s->command, 0x45);
+	zassert_ok(sensor_sample_fetch(dev));
+	zassert_equal(s->command, 0x05);
 }
 
-ZTEST(adm1176, test_threshold_half_scale_round_trip)
+ZTEST(adm1176, test_status_read_failure_still_restores_command)
 {
-	uint8_t threshold;
-	uint64_t current_ua;
+	uint8_t status;
 
-	zassert_ok(adm1176_threshold_from_microamps(
-		TEST_FULL_SCALE_CURRENT_UA / 2U, TEST_RSHUNT_UOHM,
-		&threshold));
-	zassert_equal(threshold, 128U);
-	zassert_ok(adm1176_threshold_to_microamps(
-		threshold, TEST_RSHUNT_UOHM, &current_ua));
-	zassert_equal(current_ua, TEST_FULL_SCALE_CURRENT_UA / 2U);
+	s->error = -ETIMEDOUT;
+	s->skip = 1;
+	zassert_equal(adm1176_status(dev, &status), -ETIMEDOUT);
+	zassert_equal(s->command, 0x05);
 }
 
-ZTEST(adm1176, test_threshold_full_scale_saturates)
+ZTEST(adm1176, test_failed_threshold_writes_keep_last_successful_cache)
 {
-	uint8_t threshold;
-
-	zassert_ok(adm1176_threshold_from_microamps(
-		TEST_FULL_SCALE_CURRENT_UA, TEST_RSHUNT_UOHM, &threshold));
-	zassert_equal(threshold, UINT8_MAX);
+	zassert_ok(adm1176_set_overcurrent_level(dev, 128));
+	for (unsigned int skip = 0; skip < 2; skip++) {
+		s->error = -EIO;
+		s->skip = skip;
+		zassert_equal(adm1176_set_overcurrent_level(dev, 200), -EIO);
+		zassert_equal(adm1176_overcurrent_level(dev), 128);
+	}
+	zassert_ok(adm1176_set_overcurrent_level(dev, 200));
+	zassert_equal(adm1176_overcurrent_level(dev), 200);
 }
 
-ZTEST(adm1176, test_threshold_rejects_above_full_scale)
+ZTEST(adm1176, test_device_errors_reports_and_clears_adc_alert)
 {
-	uint8_t threshold;
+	bool adc_alert;
 
-	zassert_equal(adm1176_threshold_from_microamps(
-		TEST_FULL_SCALE_CURRENT_UA + 1U, TEST_RSHUNT_UOHM,
-		&threshold), -ERANGE);
+	s->status = ADM1176_STATUS_ADC_ALERT;
+	zassert_ok(adm1176_device_errors(dev, &adc_alert));
+	zassert_true(adc_alert);
+	zassert_equal(s->status, 0);
+	zassert_ok(adm1176_device_errors(dev, &adc_alert));
+	zassert_false(adc_alert);
+	s->status = ADM1176_STATUS_ADC_ALERT;
+	s->error = -EIO;
+	s->skip = 3; /* Status succeeds; the following CLEAR write fails. */
+	zassert_equal(adm1176_device_errors(dev, &adc_alert), -EIO);
+	zassert_equal(s->status, ADM1176_STATUS_ADC_ALERT);
 }
 
-ZTEST_SUITE(adm1176, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(adm1176, NULL, setup, before, NULL, NULL);

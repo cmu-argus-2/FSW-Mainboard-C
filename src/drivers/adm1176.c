@@ -1,45 +1,23 @@
-/*
- * Copyright (c) 2026 Carnegie Mellon University
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
-/**
- * @file adm1176.c
- * @brief Zephyr driver for the ADM1176 power monitor and hot-swap controller.
- */
+/* SPDX-License-Identifier: Apache-2.0 */
 
 #define DT_DRV_COMPAT adi_adm1176
 
 #include "argus/drivers/adm1176.h"
 
 #include <errno.h>
-#include <stddef.h>
-
-#include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(adm1176, CONFIG_SENSOR_LOG_LEVEL);
-
-enum {
-	ADM1176_COMMAND_V_CONT = 1U << 0,
-	ADM1176_COMMAND_I_CONT = 1U << 2,
-	ADM1176_COMMAND_VRANGE = 1U << 4,
-	ADM1176_COMMAND_STATUS_READ = 1U << 6,
-
-	ADM1176_REGISTER_ALERT_ENABLE = 0x81,
-	ADM1176_REGISTER_ALERT_THRESHOLD = 0x82,
-	ADM1176_REGISTER_CONTROL = 0x83,
-
-	ADM1176_ALERT_ENABLE_ADC_OC4 = 1U << 1,
-	ADM1176_ALERT_ENABLE_HOT_SWAP = 1U << 2,
-	ADM1176_ALERT_CLEAR = 1U << 4,
-
-	ADM1176_CONTROL_SWITCH_OFF = 1U << 0,
-};
+#define V_MODES (ADM1176_V_CONT | ADM1176_V_ONCE)
+#define I_MODES (ADM1176_I_CONT | ADM1176_I_ONCE)
+#define STATUS_READ 0x40U
+#define ALERT_EN 0x81U
+#define ALERT_TH 0x82U
+#define CONTROL 0x83U
+#define ALERT_HOT_SWAP 0x04U
+#define ALERT_ADC_OC4 0x02U
+#define ALERT_CLEAR 0x10U
 
 struct adm1176_config {
 	struct i2c_dt_spec bus;
@@ -53,48 +31,82 @@ struct adm1176_data {
 	uint16_t raw_current;
 	uint8_t command;
 	uint8_t alert_enable;
-	uint8_t overcurrent_threshold;
-	bool alert_config_known;
+	uint8_t overcurrent_level;
+	bool restore_needed;
 	bool sample_valid;
 };
 
-static int adm1176_write_extended_register(const struct adm1176_config *config,
-					   uint8_t reg, uint8_t value)
+static int write_register(const struct adm1176_config *config, uint8_t reg, uint8_t value)
 {
-	const uint8_t message[2] = {reg, value};
+	const uint8_t bytes[] = {reg, value};
 
-	return i2c_write_dt(&config->bus, message, sizeof(message));
+	return i2c_write_dt(&config->bus, bytes, sizeof(bytes));
+}
+
+static int configure_locked(const struct adm1176_config *config,
+			    struct adm1176_data *data, uint8_t command)
+{
+	int ret = i2c_write_dt(&config->bus, &command, 1);
+
+	data->sample_valid = false;
+	data->restore_needed = ret != 0;
+	if (ret == 0) {
+		data->command = command;
+	}
+	return ret;
+}
+
+int adm1176_config(const struct device *dev, uint8_t command)
+{
+	struct adm1176_data *data = dev->data;
+	int ret;
+
+	if ((command & ~0x1FU) != 0U) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = configure_locked(dev->config, data, command);
+	k_mutex_unlock(&data->lock);
+	return ret;
 }
 
 static int adm1176_sample_fetch(const struct device *dev, enum sensor_channel channel)
 {
 	const struct adm1176_config *config = dev->config;
 	struct adm1176_data *data = dev->data;
-	uint8_t buffer[3];
-	int result;
+	uint8_t bytes[3];
+	int ret = 0;
 
 	if (channel != SENSOR_CHAN_ALL && channel != SENSOR_CHAN_VOLTAGE &&
-	    channel != SENSOR_CHAN_CURRENT && channel != SENSOR_CHAN_POWER) {
+	    channel != SENSOR_CHAN_CURRENT) {
 		return -ENOTSUP;
 	}
-
 	k_mutex_lock(&data->lock, K_FOREVER);
+	bool voltage = (data->command & V_MODES) != 0U;
+	bool current = (data->command & I_MODES) != 0U;
+
 	data->sample_valid = false;
-	/* Recover even if a previous status-command restore failed on the bus. */
-	result = i2c_write_dt(&config->bus, &data->command, sizeof(data->command));
-	if (result == 0) {
-		result = i2c_read_dt(&config->bus, buffer, sizeof(buffer));
-	}
-	if (result == 0) {
-		data->raw_voltage = ((uint16_t)buffer[0] << 4) |
-				    ((uint16_t)buffer[2] >> 4);
-		data->raw_current = ((uint16_t)buffer[1] << 4) |
-				    ((uint16_t)buffer[2] & 0x0FU);
-		data->sample_valid = true;
+	if ((channel == SENSOR_CHAN_VOLTAGE && !voltage) ||
+	    (channel == SENSOR_CHAN_CURRENT && !current) || (!voltage && !current)) {
+		ret = -ENOTSUP;
+	} else {
+		if (data->restore_needed) {
+			ret = configure_locked(config, data, data->command);
+		}
+		if (ret == 0) {
+			ret = i2c_read_dt(&config->bus, bytes, voltage && current ? 3 : 2);
+		}
+		if (ret == 0) {
+			data->raw_voltage = ((uint16_t)bytes[0] << 4) |
+					    (bytes[voltage && current ? 2 : 1] >> 4);
+			data->raw_current = voltage && current ?
+				((uint16_t)bytes[1] << 4) | (bytes[2] & 0x0FU) :
+				((uint16_t)bytes[0] << 4) | (bytes[1] >> 4);
+			data->sample_valid = true;
+		}
 	}
 	k_mutex_unlock(&data->lock);
-
-	return result;
+	return ret;
 }
 
 static int adm1176_channel_get(const struct device *dev, enum sensor_channel channel,
@@ -102,232 +114,141 @@ static int adm1176_channel_get(const struct device *dev, enum sensor_channel cha
 {
 	const struct adm1176_config *config = dev->config;
 	struct adm1176_data *data = dev->data;
-	struct adm1176_sample sample;
-	uint8_t buffer[3];
-	int result;
+	int ret;
 
 	if (value == NULL) {
 		return -EINVAL;
 	}
-	if (channel != SENSOR_CHAN_VOLTAGE && channel != SENSOR_CHAN_CURRENT &&
-	    channel != SENSOR_CHAN_POWER) {
-		return -ENOTSUP;
-	}
-
 	k_mutex_lock(&data->lock, K_FOREVER);
-	if (!data->sample_valid) {
-		k_mutex_unlock(&data->lock);
-		return -ENODATA;
-	}
-	buffer[0] = (uint8_t)(data->raw_voltage >> 4);
-	buffer[1] = (uint8_t)(data->raw_current >> 4);
-	buffer[2] = (uint8_t)(((data->raw_voltage & 0x0FU) << 4) |
-				      (data->raw_current & 0x0FU));
-	result = adm1176_decode_measurement(buffer, config->rshunt_micro_ohms,
-					    config->voltage_range_microvolt, &sample);
-	k_mutex_unlock(&data->lock);
-	if (result != 0) {
-		return result;
-	}
+	if ((channel != SENSOR_CHAN_VOLTAGE && channel != SENSOR_CHAN_CURRENT) ||
+	    (channel == SENSOR_CHAN_VOLTAGE && !(data->command & V_MODES)) ||
+	    (channel == SENSOR_CHAN_CURRENT && !(data->command & I_MODES))) {
+		ret = -ENOTSUP;
+	} else if (!data->sample_valid) {
+		ret = -ENODATA;
+	} else {
+		uint64_t micro = channel == SENSOR_CHAN_VOLTAGE ?
+			(uint64_t)data->raw_voltage *
+				((data->command & ADM1176_VRANGE) ? 6650000U : 26350000U) / 4096U :
+			(uint64_t)data->raw_current * 105840000000ULL /
+				(4096ULL * config->rshunt_micro_ohms);
 
-	switch (channel) {
-	case SENSOR_CHAN_VOLTAGE:
-		return sensor_value_from_micro(value, (int64_t)sample.voltage_uv);
-	case SENSOR_CHAN_CURRENT:
-		return sensor_value_from_micro(value, (int64_t)sample.current_ua);
-	case SENSOR_CHAN_POWER:
-		return sensor_value_from_micro(value, (int64_t)sample.power_uw);
-	default:
-		return -ENOTSUP;
+		ret = sensor_value_from_micro(value, micro);
 	}
+	k_mutex_unlock(&data->lock);
+	return ret;
 }
 
-int adm1176_read_status(const struct device *dev, uint8_t *status)
+int adm1176_status(const struct device *dev, uint8_t *status)
 {
-	if (dev == NULL || status == NULL) {
-		return -EINVAL;
-	}
-
 	const struct adm1176_config *config = dev->config;
 	struct adm1176_data *data = dev->data;
-	int result;
-	int restore_result;
-
-	k_mutex_lock(&data->lock, K_FOREVER);
-	const uint8_t status_command = data->command | ADM1176_COMMAND_STATUS_READ;
-
-	result = i2c_write_dt(&config->bus, &status_command, sizeof(status_command));
-	if (result == 0) {
-		result = i2c_read_dt(&config->bus, status, 1U);
-	}
-	restore_result = i2c_write_dt(&config->bus, &data->command,
-				      sizeof(data->command));
-	k_mutex_unlock(&data->lock);
-
-	return result != 0 ? result : restore_result;
-}
-
-int adm1176_get_status_flags(const struct device *dev,
-			     struct adm1176_status_flags *status)
-{
-	uint8_t raw;
-	int result;
+	int ret, restore;
 
 	if (status == NULL) {
 		return -EINVAL;
 	}
+	k_mutex_lock(&data->lock, K_FOREVER);
+	uint8_t command = data->command | STATUS_READ;
 
-	result = adm1176_read_status(dev, &raw);
-	if (result != 0) {
-		return result;
+	ret = i2c_write_dt(&config->bus, &command, 1);
+	if (ret == 0) {
+		ret = i2c_read_dt(&config->bus, status, 1);
 	}
-
-	return adm1176_decode_status(raw, status);
+	/* Attempt restoration even after a failed read; keep the original error. */
+	restore = i2c_write_dt(&config->bus, &data->command, 1);
+	data->restore_needed = restore != 0;
+	k_mutex_unlock(&data->lock);
+	return ret != 0 ? ret : restore;
 }
 
-int adm1176_is_enabled(const struct device *dev, bool *enabled)
+int adm1176_device_on(const struct device *dev, bool *on)
 {
 	uint8_t status;
-	int result;
+	int ret;
 
-	if (enabled == NULL) {
+	if (on == NULL) {
 		return -EINVAL;
 	}
-
-	result = adm1176_read_status(dev, &status);
-	if (result == 0) {
-		*enabled = (status & ADM1176_STATUS_OFF) == 0U;
+	ret = adm1176_status(dev, &status);
+	if (ret == 0) {
+		*on = (status & ADM1176_STATUS_OFF) == 0U;
 	}
-
-	return result;
+	return ret;
 }
 
-int adm1176_set_enabled(const struct device *dev, bool enabled)
+int adm1176_set_device_on(const struct device *dev, bool on)
 {
-	if (dev == NULL) {
-		return -EINVAL;
-	}
-
-	const struct adm1176_config *config = dev->config;
 	struct adm1176_data *data = dev->data;
-	const uint8_t new_control = enabled ? 0U : ADM1176_CONTROL_SWITCH_OFF;
-	int result;
+	int ret;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	result = adm1176_write_extended_register(config, ADM1176_REGISTER_CONTROL,
-						 new_control);
-	if (result == 0) {
-		if (enabled) {
-			result = i2c_write_dt(&config->bus, &data->command,
-					      sizeof(data->command));
+	ret = write_register(dev->config, CONTROL, on ? 0 : 1);
+	if (ret == 0 && on) {
+		ret = configure_locked(dev->config, data, ADM1176_V_CONT | ADM1176_I_CONT);
+	}
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+int adm1176_set_overcurrent_level(const struct device *dev, uint8_t level)
+{
+	struct adm1176_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	uint8_t enable = data->alert_enable | ALERT_ADC_OC4;
+
+	ret = write_register(dev->config, ALERT_EN, enable);
+	if (ret == 0) {
+		data->alert_enable = enable;
+		ret = write_register(dev->config, ALERT_TH, level);
+		if (ret == 0) {
+			data->overcurrent_level = level;
 		}
 	}
 	k_mutex_unlock(&data->lock);
-
-	return result;
+	return ret;
 }
 
-int adm1176_set_overcurrent_threshold_raw(const struct device *dev,
-					 uint8_t threshold)
+uint8_t adm1176_overcurrent_level(const struct device *dev)
 {
-	if (dev == NULL) {
-		return -EINVAL;
-	}
-
-	const struct adm1176_config *config = dev->config;
 	struct adm1176_data *data = dev->data;
-	const uint8_t new_alert_enable =
-		ADM1176_ALERT_ENABLE_HOT_SWAP | ADM1176_ALERT_ENABLE_ADC_OC4;
-	int result;
+	uint8_t level;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	/* Extended registers are write-only; own an explicit policy only after
-	 * both writes succeed. Never infer it from power-on defaults after reboot.
-	 */
-	data->alert_config_known = false;
-	result = adm1176_write_extended_register(config,
-						 ADM1176_REGISTER_ALERT_THRESHOLD,
-						 threshold);
-	if (result == 0) {
-		result = adm1176_write_extended_register(
-			config, ADM1176_REGISTER_ALERT_ENABLE, new_alert_enable);
-		if (result == 0) {
-			data->alert_enable = new_alert_enable;
-			data->overcurrent_threshold = threshold;
-			data->alert_config_known = true;
+	level = data->overcurrent_level;
+	k_mutex_unlock(&data->lock);
+	return level;
+}
+
+int adm1176_clear(const struct device *dev)
+{
+	struct adm1176_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = write_register(dev->config, ALERT_EN, data->alert_enable | ALERT_CLEAR);
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+int adm1176_device_errors(const struct device *dev, bool *adc_alert)
+{
+	uint8_t status;
+	int ret;
+
+	if (adc_alert == NULL) {
+		return -EINVAL;
+	}
+	ret = adm1176_status(dev, &status);
+	if (ret == 0) {
+		*adc_alert = (status & ADM1176_STATUS_ADC_ALERT) != 0U;
+		if (*adc_alert) {
+			ret = adm1176_clear(dev);
 		}
 	}
-	k_mutex_unlock(&data->lock);
-
-	return result;
-}
-
-int adm1176_set_overcurrent_threshold(const struct device *dev,
-				      uint64_t current_ua)
-{
-	if (dev == NULL) {
-		return -EINVAL;
-	}
-
-	const struct adm1176_config *config = dev->config;
-	uint8_t threshold;
-	int result = adm1176_threshold_from_microamps(
-		current_ua, config->rshunt_micro_ohms, &threshold);
-
-	if (result != 0) {
-		return result;
-	}
-
-	return adm1176_set_overcurrent_threshold_raw(dev, threshold);
-}
-
-int adm1176_get_overcurrent_threshold(const struct device *dev,
-				      uint64_t *current_ua)
-{
-	if (dev == NULL || current_ua == NULL) {
-		return -EINVAL;
-	}
-
-	const struct adm1176_config *config = dev->config;
-	struct adm1176_data *data = dev->data;
-	uint8_t threshold;
-
-	k_mutex_lock(&data->lock, K_FOREVER);
-	if (!data->alert_config_known) {
-		k_mutex_unlock(&data->lock);
-		return -ENODATA;
-	}
-	threshold = data->overcurrent_threshold;
-	k_mutex_unlock(&data->lock);
-
-	return adm1176_threshold_to_microamps(
-		threshold, config->rshunt_micro_ohms, current_ua);
-}
-
-int adm1176_clear_alerts(const struct device *dev)
-{
-	if (dev == NULL) {
-		return -EINVAL;
-	}
-
-	const struct adm1176_config *config = dev->config;
-	struct adm1176_data *data = dev->data;
-	int result;
-
-	k_mutex_lock(&data->lock, K_FOREVER);
-	if (!data->alert_config_known) {
-		k_mutex_unlock(&data->lock);
-		return -ENODATA;
-	}
-	result = adm1176_write_extended_register(
-		config, ADM1176_REGISTER_ALERT_ENABLE,
-		data->alert_enable | ADM1176_ALERT_CLEAR);
-	if (result != 0) {
-		data->alert_config_known = false;
-	}
-	k_mutex_unlock(&data->lock);
-
-	return result;
+	return ret;
 }
 
 static int adm1176_init(const struct device *dev)
@@ -336,43 +257,31 @@ static int adm1176_init(const struct device *dev)
 	struct adm1176_data *data = dev->data;
 
 	if (!i2c_is_ready_dt(&config->bus)) {
-		LOG_ERR("I2C bus is not ready");
 		return -ENODEV;
 	}
 	if (config->rshunt_micro_ohms == 0U) {
-		LOG_ERR("rshunt-micro-ohms must be nonzero");
 		return -EINVAL;
 	}
-
 	k_mutex_init(&data->lock);
-	data->command = ADM1176_COMMAND_V_CONT | ADM1176_COMMAND_I_CONT;
-	if (config->voltage_range_microvolt ==
-	    ADM1176_VOLTAGE_FULL_SCALE_LOW_UV) {
-		data->command |= ADM1176_COMMAND_VRANGE;
-	}
-	data->alert_config_known = false;
-	data->sample_valid = false;
-
-	return i2c_write_dt(&config->bus, &data->command, sizeof(data->command));
+	data->alert_enable = ALERT_HOT_SWAP;
+	data->overcurrent_level = UINT8_MAX;
+	return adm1176_config(dev, ADM1176_V_CONT | ADM1176_I_CONT |
+		(config->voltage_range_microvolt == 6650000U ? ADM1176_VRANGE : 0));
 }
 
-static DEVICE_API(sensor, adm1176_driver_api) = {
+static DEVICE_API(sensor, adm1176_api) = {
 	.sample_fetch = adm1176_sample_fetch,
 	.channel_get = adm1176_channel_get,
 };
 
-#define ADM1176_DEFINE(inst)                                                   \
-	static struct adm1176_data adm1176_data_##inst;                         \
-	static const struct adm1176_config adm1176_config_##inst = {            \
-		.bus = I2C_DT_SPEC_INST_GET(inst),                                \
-		.rshunt_micro_ohms = DT_INST_PROP(inst, rshunt_micro_ohms),       \
-		.voltage_range_microvolt =                                        \
-			DT_INST_PROP(inst, voltage_range_microvolt),                \
-	};                                                                        \
-	SENSOR_DEVICE_DT_INST_DEFINE(inst, adm1176_init, NULL,                    \
-				     &adm1176_data_##inst,                        \
-				     &adm1176_config_##inst, POST_KERNEL,         \
-				     CONFIG_SENSOR_INIT_PRIORITY,                  \
-				     &adm1176_driver_api);
+#define ADM1176_DEFINE(inst) \
+	static struct adm1176_data data_##inst; \
+	static const struct adm1176_config config_##inst = { \
+		.bus = I2C_DT_SPEC_INST_GET(inst), \
+		.rshunt_micro_ohms = DT_INST_PROP(inst, rshunt_micro_ohms), \
+		.voltage_range_microvolt = DT_INST_PROP(inst, voltage_range_microvolt), \
+	}; \
+	SENSOR_DEVICE_DT_INST_DEFINE(inst, adm1176_init, NULL, &data_##inst, \
+		&config_##inst, POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &adm1176_api);
 
 DT_INST_FOREACH_STATUS_OKAY(ADM1176_DEFINE)

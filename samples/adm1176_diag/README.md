@@ -1,58 +1,49 @@
-# ADM1176 on-target smoke test
+# ADM1176
 
-This application is a read-only hardware test for the ADM1176 devices on the
-Argus v4 mainboard. It reads voltage, current, power, and status from the main,
-GPS, and radio power monitors every two seconds. It does not change output
-switching or alert thresholds.
+The driver follows the previous CircuitPython driver and the Embassy Rust port.
+It starts continuous voltage/current conversion and exposes both measurements
+through Zephyr's sensor API. The other functions retain the Python names:
 
-The C repository uses its own `boards/cmu/argus/` board definition and
-`dts/bindings/sensor/adi,adm1176.yaml` binding. It does not depend on
-FSW-Zephyr-Board-Lib. Keep the ADM1176 nodes and binding synchronized with
-the separate copies in that repository when changing hardware configuration.
+| Python | C |
+|---|---|
+| `config()` | `adm1176_config()`, using command flags instead of strings |
+| `read_voltage_current()` | `sensor_sample_fetch()` and voltage/current channels |
+| `set_device_on()`, `device_on()` | `adm1176_set_device_on()`, `adm1176_device_on()` |
+| `set_overcurrent_level()`, `overcurrent_level()` | Same names with `adm1176_` prefix; raw 8-bit values |
+| `status()`, `clear()` | `adm1176_status()`, `adm1176_clear()` |
+| `device_errors` | `adm1176_device_errors()`: report ADC_ALERT, then clear alerts |
 
-The current configuration covers I2C1 addresses 0x40 (main), 0x41 (GPS),
-and 0x42 (radio), each with a 10 milliohm shunt, following the previous
-flight-software configuration. Verify these values against the board being
-tested before interpreting current readings. Driver initialization starts
-continuous voltage/current conversion; status reads also write the command
-byte. This test does not intentionally switch any power rail.
+The threshold getter is a **software cache**, initially 0xFF, updated after a
+successful setter. It does not read hardware registers. The driver owns its
+alert mask for the current boot (initially hot-swap only, adding ADC_OC4 when a
+threshold is set). CLEAR writes that mask; it does not preserve settings left
+by earlier firmware. Applications should reapply their alert policy at startup.
+Initialization itself leaves output switching and alert registers unchanged.
+Python's empty `reset()` and `deinit()` methods are omitted.
 
-Run the automated tests without hardware from the repository root:
+Configuration supports continuous/one-shot, voltage/current-only, and VRANGE.
+One-shot reads may return an I2C error until conversion completes; retry the
+fetch without reissuing config. Turning on restores continuous V/I, as Python
+does. Failed samples return an error; channel reads return `-ENODATA` until
+the next successful sample. Status reads restore the configured measurement
+command, with a failed restoration retried by the next sample.
+
+Run the automated tests from the C repository root:
 
 ```sh
 west twister -T tests/drivers/adm1176 -p qemu_cortex_m3 --inline-logs
 ```
 
-Passing these tests or compiling a UF2 does not replace an on-board test.
-
-Build it from the repository root:
+Build the telemetry-only board diagnostic:
 
 ```sh
 west build -p always -b 'argus@4/rp2350b/m33_0' \
-  -s samples/adm1176_diag \
-  -d build-adm1176-diag
+  -s samples/adm1176_diag -d build-adm1176-diag
 ```
 
-The UF2 file is generated at:
-
-```text
-build-adm1176-diag/zephyr/zephyr.uf2
-```
-
-After flashing, connect to the board's USB serial console. Each detected
-monitor should repeatedly print plausible voltage, current, power, and status
-values. A missing or non-responding device prints `NOT READY` or a negative I2C
-error code.
-
-The sensor API returns `-ENODATA` before a successful sample and after a failed
-sample. Each fetch restores measurement mode before reading, so a previous
-status-read restore failure can recover on the next fetch.
-
-Initialization leaves output switching and write-only alert registers intact.
-After a controller-only reboot their previous values may still be present.
-Before calling `adm1176_get_overcurrent_threshold()` or `adm1176_clear_alerts()`,
-the application must explicitly configure a threshold successfully. That call
-sets the requested threshold and enables hot-swap and four-consecutive-sample
-ADC alerts. Unknown configuration returns `-ENODATA`; failed configuration or
-clear writes invalidate the cached policy until configuration succeeds again.
-The diagnostic application only reads telemetry and does not call these APIs.
+Flash `build-adm1176-diag/zephyr/zephyr.uf2` and open the USB serial console.
+The diagnostic reads the main/GPS/radio monitors on I2C1 at 0x40/0x41/0x42
+every two seconds, without switching rails or changing alert thresholds.
+The 10 milliohm shunts follow the old flight-software configuration; confirm
+them on the test board. The C repository uses its own board files and binding.
+Compilation and simulated tests do not establish hardware validation.

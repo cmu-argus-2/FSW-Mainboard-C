@@ -1,26 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-/**
- * @file adm1176.h
- * @brief Zephyr interface for the ADM1176 power monitor and hot-swap controller.
- */
-
 #ifndef ARGUS_DRIVERS_ADM1176_H_
 #define ARGUS_DRIVERS_ADM1176_H_
 
 #include <stdbool.h>
 #include <stdint.h>
-
 #include <zephyr/device.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define ADM1176_ADC_STEPS 4096U
-#define ADM1176_VOLTAGE_FULL_SCALE_HIGH_UV 26350000U
-#define ADM1176_VOLTAGE_FULL_SCALE_LOW_UV 6650000U
-#define ADM1176_CURRENT_SENSE_FULL_SCALE_UV 105840U
+enum adm1176_command {
+	ADM1176_V_CONT = 0x01,
+	ADM1176_V_ONCE = 0x02,
+	ADM1176_I_CONT = 0x04,
+	ADM1176_I_ONCE = 0x08,
+	ADM1176_VRANGE = 0x10,
+};
 
 enum adm1176_status_bit {
 	ADM1176_STATUS_ADC_OVERCURRENT = 1U << 0,
@@ -31,66 +28,21 @@ enum adm1176_status_bit {
 	ADM1176_STATUS_OFF_ALERT = 1U << 5,
 };
 
-struct adm1176_sample {
-	uint16_t raw_voltage;
-	uint16_t raw_current;
-	uint64_t voltage_uv;
-	uint64_t current_ua;
-	uint64_t power_uw;
-};
-
-struct adm1176_status_flags {
-	bool adc_overcurrent;
-	bool adc_alert;
-	bool hot_swap_overcurrent;
-	bool hot_swap_alert;
-	bool output_off;
-	bool output_off_alert;
-	uint8_t raw;
-};
-
-/** Decode one three-byte ADM1176 measurement without accessing hardware. */
-int adm1176_decode_measurement(const uint8_t buffer[3],
-			       uint32_t rshunt_micro_ohms,
-			       uint32_t voltage_range_microvolt,
-			       struct adm1176_sample *sample);
-
-/** Decode the ADM1176 status register into named flags. */
-int adm1176_decode_status(uint8_t raw, struct adm1176_status_flags *status);
-
-/** Convert an overcurrent limit in microamps to the ADM1176's 8-bit threshold. */
-int adm1176_threshold_from_microamps(uint64_t current_ua,
-				    uint32_t rshunt_micro_ohms,
-				    uint8_t *threshold);
-
-/** Convert an ADM1176 8-bit overcurrent threshold to microamps. */
-int adm1176_threshold_to_microamps(uint8_t threshold,
-				  uint32_t rshunt_micro_ohms,
-				  uint64_t *current_ua);
-
-int adm1176_read_status(const struct device *dev, uint8_t *status);
-int adm1176_get_status_flags(const struct device *dev,
-			     struct adm1176_status_flags *status);
-int adm1176_is_enabled(const struct device *dev, bool *enabled);
-int adm1176_set_enabled(const struct device *dev, bool enabled);
-/** Configure the threshold and enable hot-swap and four-sample ADC alerts.
- * This explicitly replaces any previous alert-enable policy on the device.
- * A failed write invalidates the cached policy until a successful retry.
+/* Voltage/current use sensor_sample_fetch() and sensor_channel_get(). */
+int adm1176_config(const struct device *dev, uint8_t command);
+int adm1176_status(const struct device *dev, uint8_t *status);
+/* ON/SWOFF status, not a guarantee that the downstream rail is powered. */
+int adm1176_device_on(const struct device *dev, bool *on);
+int adm1176_set_device_on(const struct device *dev, bool on);
+int adm1176_set_overcurrent_level(const struct device *dev, uint8_t level);
+/* Python-compatible software cache: initially 0xFF, updated on success.
+ * Not hardware readback: write-only registers may survive an MCU reboot.
  */
-int adm1176_set_overcurrent_threshold_raw(const struct device *dev,
-					 uint8_t threshold);
-int adm1176_set_overcurrent_threshold(const struct device *dev,
-				      uint64_t current_ua);
-/** Get the last successfully configured threshold, not a hardware readback.
- * Returns -ENODATA until this driver has successfully configured the alerts
- * in the current boot, or after a configuration/clear write fails.
- */
-int adm1176_get_overcurrent_threshold(const struct device *dev,
-				      uint64_t *current_ua);
-/** Clear latched alerts using the known alert-enable policy.
- * Returns -ENODATA if the policy is unknown; configure a threshold first.
- */
-int adm1176_clear_alerts(const struct device *dev);
+uint8_t adm1176_overcurrent_level(const struct device *dev);
+/* Write this boot's alert mask (initially hot-swap only) with CLEAR set. */
+int adm1176_clear(const struct device *dev);
+/* Like Python device_errors: report ADC_ALERT and clear alerts if present. */
+int adm1176_device_errors(const struct device *dev, bool *adc_alert);
 
 #ifdef __cplusplus
 }

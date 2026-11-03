@@ -10,7 +10,6 @@ project(FSW-Mainboard-C)
 target_sources(app PRIVATE
         src/main.c
         src/drivers/adm1176.c
-        src/drivers/adm1176_common.c
 )
 
 target_include_directories(app PRIVATE

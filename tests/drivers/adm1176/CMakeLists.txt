@@ -11,9 +11,7 @@ project(adm1176_tests)
 target_sources(app PRIVATE
         src/main.c
         src/adm1176_emul.c
-        src/driver_api.c
         ../../../src/drivers/adm1176.c
-        ../../../src/drivers/adm1176_common.c
 )
 
 target_include_directories(app PRIVATE

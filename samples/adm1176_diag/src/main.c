@@ -1,110 +1,55 @@
-/*
- * Copyright (c) 2026 Carnegie Mellon University
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+/* SPDX-License-Identifier: Apache-2.0 */
 
-#include <stdint.h>
-
-#include <zephyr/device.h>
-#include <zephyr/devicetree.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-
 #include "argus/drivers/adm1176.h"
 
-struct monitor {
+static const struct {
 	const char *name;
-	uint8_t address;
-	const struct device *device;
+	const struct device *dev;
+} monitors[] = {
+	{"main", DEVICE_DT_GET(DT_NODELABEL(main_power_monitor))},
+	{"GPS", DEVICE_DT_GET(DT_NODELABEL(gps_power_monitor))},
+	{"radio", DEVICE_DT_GET(DT_NODELABEL(radio_power_monitor))},
 };
 
-static const struct monitor monitors[] = {
-	{
-		.name = "main",
-		.address = 0x40,
-		.device = DEVICE_DT_GET(DT_NODELABEL(main_power_monitor)),
-	},
-	{
-		.name = "GPS",
-		.address = 0x41,
-		.device = DEVICE_DT_GET(DT_NODELABEL(gps_power_monitor)),
-	},
-	{
-		.name = "radio",
-		.address = 0x42,
-		.device = DEVICE_DT_GET(DT_NODELABEL(radio_power_monitor)),
-	},
-};
-
-static void print_sensor_value(const struct sensor_value *value, const char *unit)
+static void print_monitor(const char *name, const struct device *dev)
 {
-	int32_t fraction = value->val2;
+	struct sensor_value voltage, current;
+	uint8_t status;
+	int ret;
 
-	if (fraction < 0) {
-		fraction = -fraction;
-	}
-	printk("%d.%03d %s", value->val1, fraction / 1000, unit);
-}
-
-static void print_monitor(const struct monitor *monitor)
-{
-	struct sensor_value voltage;
-	struct sensor_value current;
-	struct sensor_value power;
-	struct adm1176_status_flags status;
-	int result;
-
-	printk("%-14s [0x%02x]: ", monitor->name, monitor->address);
-	if (!device_is_ready(monitor->device)) {
-		printk("NOT READY\n");
+	if (!device_is_ready(dev)) {
+		printk("%s: NOT READY\n", name);
 		return;
 	}
-
-	result = sensor_sample_fetch(monitor->device);
-	if (result != 0) {
-		printk("sample read failed: %d\n", result);
+	ret = sensor_sample_fetch(dev);
+	if (ret == 0) {
+		ret = sensor_channel_get(dev, SENSOR_CHAN_VOLTAGE, &voltage);
+	}
+	if (ret == 0) {
+		ret = sensor_channel_get(dev, SENSOR_CHAN_CURRENT, &current);
+	}
+	if (ret == 0) {
+		ret = adm1176_status(dev, &status);
+	}
+	if (ret != 0) {
+		printk("%s: read failed: %d\n", name, ret);
 		return;
 	}
-
-	result = sensor_channel_get(monitor->device, SENSOR_CHAN_VOLTAGE, &voltage);
-	result = result != 0 ? result :
-		 sensor_channel_get(monitor->device, SENSOR_CHAN_CURRENT, &current);
-	result = result != 0 ? result :
-		 sensor_channel_get(monitor->device, SENSOR_CHAN_POWER, &power);
-	if (result != 0) {
-		printk("conversion failed: %d\n", result);
-		return;
-	}
-
-	print_sensor_value(&voltage, "V");
-	printk(", ");
-	print_sensor_value(&current, "A");
-	printk(", ");
-	print_sensor_value(&power, "W");
-
-	result = adm1176_get_status_flags(monitor->device, &status);
-	if (result == 0) {
-		printk(", status=0x%02x", status.raw);
-	} else {
-		printk(", status read failed: %d", result);
-	}
-	printk("\n");
+	printk("%s: %d.%06d V, %d.%06d A, status=0x%02x\n",
+	       name, voltage.val1, voltage.val2, current.val1, current.val2, status);
 }
 
 int main(void)
 {
-	printk("ADM1176 read-only hardware test\n");
-	printk("No output switching or alert thresholds will be changed.\n\n");
-
+	printk("ADM1176 telemetry test: output and alert settings are unchanged.\n");
 	for (;;) {
-		for (size_t i = 0; i < ARRAY_SIZE(monitors); ++i) {
-			print_monitor(&monitors[i]);
+		for (size_t i = 0; i < ARRAY_SIZE(monitors); i++) {
+			print_monitor(monitors[i].name, monitors[i].dev);
 		}
-		printk("\n");
 		k_sleep(K_SECONDS(2));
 	}
-
 	return 0;
 }
