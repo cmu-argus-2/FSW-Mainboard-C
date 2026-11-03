@@ -1,166 +1,304 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <errno.h>
-#include <limits.h>
-#include <stdint.h>
-
+#include <math.h>
+#include <zephyr/drivers/emul.h>
+#include <zephyr/init.h>
 #include <zephyr/ztest.h>
 
 #include "argus/drivers/drv8235.h"
+#include "drv8235_emul.h"
 
-ZTEST(drv8235_common, test_voltage_command_zero_is_coast)
+static const struct device *const dev = DEVICE_DT_GET(DT_NODELABEL(drv8235_test));
+static const struct emul *const emul = EMUL_DT_GET(DT_NODELABEL(drv8235_test));
+static uint8_t boot_config0, boot_config4, boot_target;
+
+static int capture_boot(void)
 {
-	uint8_t code = UINT8_MAX;
-	enum drv8235_bridge_mode mode = DRV8235_BRIDGE_BRAKE;
+	boot_config0 = drv8235_emul_get_reg(emul, 0x09);
+	boot_config4 = drv8235_emul_get_reg(emul, 0x0D);
+	boot_target = drv8235_emul_get_reg(emul, 0x0F);
+	return 0;
+}
+SYS_INIT(capture_boot, APPLICATION, 0);
 
-	zassert_ok(drv8235_voltage_to_code(0, 6000000U, &code, &mode));
-	zassert_equal(code, 0U);
-	zassert_equal(mode, DRV8235_BRIDGE_COAST);
+static void *setup(void)
+{
+	zassert_true(device_is_ready(dev));
+	zassert_equal(boot_config0 & 0x80, 0x80);
+	zassert_equal(boot_config4 & 0x0F, 0x0C);
+	zassert_equal(boot_target, 0);
+	return NULL;
 }
 
-ZTEST(drv8235_common, test_voltage_command_converts_sign_and_magnitude)
+static void before(void *fixture)
 {
-	uint8_t code;
-	enum drv8235_bridge_mode mode;
-
-	zassert_ok(drv8235_voltage_to_code(6000000, 6000000U, &code, &mode));
-	zassert_equal(code, 35U);
-	zassert_equal(mode, DRV8235_BRIDGE_FORWARD);
-	zassert_ok(drv8235_voltage_to_code(-6000000, 6000000U, &code, &mode));
-	zassert_equal(code, 35U);
-	zassert_equal(mode, DRV8235_BRIDGE_REVERSE);
+	ARG_UNUSED(fixture);
+	drv8235_emul_reset(emul);
+	zassert_ok(drv8235_init(dev));
+	drv8235_emul_clear_writes(emul);
 }
 
-ZTEST(drv8235_common, test_voltage_command_enforces_safety_limit)
+static void assert_command(uint8_t index, enum drv8235_bridge_mode mode)
 {
-	uint8_t code;
-	enum drv8235_bridge_mode mode;
+	enum drv8235_bridge_mode actual;
+	int16_t raw = 1234;
+	float volts = 1234, throttle = 1234;
 
-	zassert_equal(drv8235_voltage_to_code(6000001, 6000000U, &code, &mode), -ERANGE);
-	zassert_equal(drv8235_voltage_to_code(INT32_MIN, 6000000U, &code, &mode), -ERANGE);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x0F), index);
+	zassert_ok(drv8235_get_bridge_control(dev, &actual));
+	zassert_equal(actual, mode);
+	if (mode == DRV8235_BRIDGE_COAST) {
+		zassert_equal(drv8235_get_throttle_raw(dev, &raw), -ENODATA);
+		zassert_equal(drv8235_get_throttle_volts(dev, &volts), -ENODATA);
+		zassert_equal(drv8235_get_throttle(dev, &throttle), -ENODATA);
+		zassert_equal(raw, 1234);
+		zassert_equal(volts, 1234);
+		zassert_equal(throttle, 1234);
+		return;
+	}
+	int sign = mode == DRV8235_BRIDGE_REVERSE ? -1 : 1;
+	int16_t expected = mode == DRV8235_BRIDGE_BRAKE ? 0 : sign * index;
+
+	zassert_ok(drv8235_get_throttle_raw(dev, &raw));
+	zassert_equal(raw, expected);
+	zassert_ok(drv8235_get_throttle_volts(dev, &volts));
+	zassert_within(volts, expected * 0.16733f, 0.0001f);
+	zassert_ok(drv8235_get_throttle(dev, &throttle));
 }
 
-ZTEST(drv8235_common, test_voltage_status_conversion)
+ZTEST(drv8235, test_init_matches_original_settings)
 {
-	int32_t voltage_uv;
-
-	zassert_ok(drv8235_voltage_from_code(30U, DRV8235_BRIDGE_FORWARD, &voltage_uv));
-	zassert_equal(voltage_uv, 5000000);
-	zassert_ok(drv8235_voltage_from_code(30U, DRV8235_BRIDGE_REVERSE, &voltage_uv));
-	zassert_equal(voltage_uv, -5000000);
-	zassert_ok(drv8235_voltage_from_code(30U, DRV8235_BRIDGE_COAST, &voltage_uv));
-	zassert_equal(voltage_uv, 0);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x02);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x09), 0xE0);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x0C), 0x73);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x0D), 0x3C);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x0E), 0x3F);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x13), 0xB3);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x14), 41);
+	assert_command(0, DRV8235_BRIDGE_COAST);
 }
 
-ZTEST(drv8235_common, test_current_and_duty_conversion)
+ZTEST(drv8235, test_normalized_throttle_and_clamping)
 {
-	uint32_t current_ua;
-	uint16_t duty_permille;
+	/* Expected codes and getters from the Python/Rust compatibility cases. */
+	const struct {
+		float command;
+		uint8_t index;
+		enum drv8235_bridge_mode mode;
+		float reported;
+	} cases[] = {
+		{1.0f, 35, DRV8235_BRIDGE_FORWARD, 0.9742983f},
+		{-0.5f, 17, DRV8235_BRIDGE_REVERSE, -0.4764817f},
+		{2.0f, 35, DRV8235_BRIDGE_FORWARD, 0.9742983f},
+		{-2.0f, 35, DRV8235_BRIDGE_REVERSE, -0.9742983f},
+		{0.0f, 0, DRV8235_BRIDGE_BRAKE, 0.0f},
+		{0.001f, 0, DRV8235_BRIDGE_BRAKE, 0.0f},
+		{-0.001f, 0, DRV8235_BRIDGE_BRAKE, 0.0f},
+	};
 
-	zassert_ok(drv8235_current_from_code(0x60U, 3700000U, &current_ua));
-	zassert_equal(current_ua, 1850000U);
-	zassert_ok(drv8235_current_from_code(0U, 3700000U, &current_ua));
-	zassert_equal(current_ua, 0U);
-	zassert_ok(drv8235_current_from_code(0xC0U, 3700000U, &current_ua));
-	zassert_equal(current_ua, 3700000U);
-	zassert_equal(drv8235_current_from_code(0xC1U, 3700000U, &current_ua), -ERANGE);
-	zassert_equal(drv8235_current_from_code(0x60U, 0U, &current_ua), -EINVAL);
-	zassert_equal(drv8235_current_from_code(0x60U, UINT32_MAX, &current_ua), -EINVAL);
+	for (size_t i = 0; i < ARRAY_SIZE(cases); ++i) {
+		float actual;
 
-	zassert_ok(drv8235_duty_from_code(0x20U, &duty_permille));
-	zassert_equal(duty_permille, 508U);
-	zassert_ok(drv8235_duty_from_code(0x3FU, &duty_permille));
-	zassert_equal(duty_permille, 1000U);
+		zassert_ok(drv8235_set_throttle(dev, cases[i].command));
+		assert_command(cases[i].index, cases[i].mode);
+		zassert_ok(drv8235_get_throttle(dev, &actual));
+		zassert_within(actual, cases[i].reported, 0.0001f);
+	}
 }
 
-ZTEST(drv8235_common, test_fault_decode)
+ZTEST(drv8235, test_voltage_throttle_rounding_and_clamping)
+{
+	const struct {
+		float volts;
+		uint8_t index;
+		enum drv8235_bridge_mode mode;
+	} cases[] = {
+		{3.0f, 18, DRV8235_BRIDGE_FORWARD},
+		{-50.0f, 255, DRV8235_BRIDGE_REVERSE},
+		{50.0f, 255, DRV8235_BRIDGE_FORWARD},
+		{0.1f, 1, DRV8235_BRIDGE_FORWARD},
+		{0.001f, 0, DRV8235_BRIDGE_FORWARD},
+		{0.0f, 0, DRV8235_BRIDGE_BRAKE},
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(cases); ++i) {
+		zassert_ok(drv8235_set_throttle_volts(dev, cases[i].volts));
+		assert_command(cases[i].index, cases[i].mode);
+	}
+}
+
+ZTEST(drv8235, test_raw_throttle_handles_reverse_and_limits)
+{
+	const int16_t commands[] = {300, -300, INT16_MIN, INT16_MAX, -17, 17, 0};
+	const uint8_t indices[] = {255, 255, 255, 255, 17, 17, 0};
+
+	for (size_t i = 0; i < ARRAY_SIZE(commands); ++i) {
+		zassert_ok(drv8235_set_throttle_raw(dev, commands[i]));
+		assert_command(indices[i], commands[i] == 0 ? DRV8235_BRIDGE_BRAKE :
+			(commands[i] < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD));
+	}
+}
+
+ZTEST(drv8235, test_coast_is_distinct_from_zero_brake)
+{
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	zassert_ok(drv8235_set_throttle(dev, 0));
+	assert_command(0, DRV8235_BRIDGE_BRAKE);
+	zassert_ok(drv8235_coast(dev));
+	assert_command(0, DRV8235_BRIDGE_COAST);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x09) & 0x80, 0x80);
+}
+
+ZTEST(drv8235, test_same_direction_updates_do_not_insert_coast)
+{
+	zassert_ok(drv8235_set_throttle(dev, 0.5f));
+	drv8235_emul_clear_writes(emul);
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	zassert_equal(drv8235_emul_write_count(emul), 2);
+	const struct drv8235_emul_write *target = drv8235_emul_get_write(emul, 0);
+	const struct drv8235_emul_write *bridge = drv8235_emul_get_write(emul, 1);
+
+	zassert_not_null(target);
+	zassert_not_null(bridge);
+	zassert_equal(target->reg, 0x0F);
+	zassert_equal(target->value, 35);
+	zassert_equal(bridge->reg, 0x0D);
+	zassert_equal(bridge->value & 3, DRV8235_BRIDGE_FORWARD);
+}
+
+ZTEST(drv8235, test_voltage_current_match_python_in_all_modes)
+{
+	const enum drv8235_bridge_mode modes[] = {
+		DRV8235_BRIDGE_FORWARD, DRV8235_BRIDGE_REVERSE,
+		DRV8235_BRIDGE_BRAKE, DRV8235_BRIDGE_COAST,
+	};
+
+	drv8235_emul_set_reg(emul, 0x04, 100);
+	drv8235_emul_set_reg(emul, 0x05, 50);
+	for (size_t i = 0; i < ARRAY_SIZE(modes); ++i) {
+		float volts, amps;
+		int sign = modes[i] == DRV8235_BRIDGE_REVERSE ? -1 : 1;
+
+		drv8235_emul_set_reg(emul, 0x0D, 0x3C | modes[i]);
+		zassert_ok(drv8235_read_voltage_current(dev, &volts, &amps));
+		zassert_within(volts, sign * 16.733f, 0.0001f);
+		zassert_within(amps, sign * 0.7255f, 0.0001f);
+	}
+	/* In particular, brake must retain nonzero IMTR, not fabricate zero. */
+}
+
+ZTEST(drv8235, test_fault_read_decodes_and_clears)
 {
 	struct drv8235_faults faults;
 
-	zassert_ok(drv8235_decode_faults(0xBEU, &faults));
-	zassert_true(faults.any);
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	drv8235_emul_set_reg(emul, 0x00, 0xBE);
+	zassert_ok(drv8235_get_faults(dev, &faults));
+	zassert_equal(faults.raw, 0xBE);
 	zassert_true(faults.stall);
 	zassert_true(faults.overcurrent);
 	zassert_true(faults.overvoltage);
 	zassert_true(faults.thermal_shutdown);
 	zassert_false(faults.power_on_reset);
-	zassert_equal(faults.raw, 0xBEU);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x02);
+	assert_command(0, DRV8235_BRIDGE_COAST);
 }
 
-ZTEST(drv8235_common, test_npor_is_active_low_and_normal_status_is_not_a_fault)
+ZTEST(drv8235, test_normal_npor_does_not_report_fault_or_write)
 {
 	struct drv8235_faults faults;
 
-	zassert_ok(drv8235_decode_faults(0x00U, &faults));
-	zassert_true(faults.power_on_reset);
-	zassert_true(faults.any);
-	zassert_ok(drv8235_decode_faults(0x02U, &faults));
+	zassert_ok(drv8235_get_faults(dev, &faults));
 	zassert_false(faults.power_on_reset);
-	zassert_false(faults.any);
-	zassert_ok(drv8235_decode_faults(0x06U, &faults));
-	zassert_true(faults.thermal_shutdown);
-	zassert_true(faults.any, "latched TSD must not be hidden by FAULT=0");
+	zassert_false(faults.stall || faults.overcurrent || faults.overvoltage ||
+		      faults.thermal_shutdown);
+	zassert_equal(drv8235_emul_write_count(emul), 0);
 }
 
-ZTEST(drv8235_common, test_rounded_commands_never_exceed_encoded_limit)
+ZTEST(drv8235, test_reset_requires_init_even_after_clear)
 {
-	static const uint32_t limits[] = {1U, 100000U, 1000000U, 6000000U, 42670000U};
-	uint8_t code;
+	struct drv8235_faults faults;
+
+	drv8235_emul_reset(emul);
+	zassert_ok(drv8235_get_faults(dev, &faults));
+	zassert_true(faults.power_on_reset);
+	zassert_equal(drv8235_set_throttle(dev, 1), -EAGAIN);
+	zassert_ok(drv8235_clear_faults(dev));
+	zassert_equal(drv8235_set_throttle(dev, 1), -EAGAIN);
+	zassert_ok(drv8235_init(dev));
+	zassert_ok(drv8235_set_throttle(dev, 1));
+}
+
+ZTEST(drv8235, test_fault_blocks_drive_until_cleared)
+{
+	drv8235_emul_set_reg(emul, 0x00, 0x92);
+	zassert_equal(drv8235_set_throttle(dev, 1), -EIO);
+	zassert_ok(drv8235_clear_faults(dev));
+	assert_command(0, DRV8235_BRIDGE_COAST);
+	zassert_ok(drv8235_set_throttle(dev, 1));
+}
+
+ZTEST(drv8235, test_reinit_disables_before_protected_writes)
+{
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	drv8235_emul_clear_writes(emul);
+	zassert_ok(drv8235_init(dev));
+	const struct drv8235_emul_write *first = drv8235_emul_get_write(emul, 0);
+
+	zassert_not_null(first);
+	zassert_equal(first->reg, 0x09);
+	zassert_equal(first->value & 0x80, 0);
+	assert_command(0, DRV8235_BRIDGE_COAST);
+}
+
+ZTEST(drv8235, test_i2c_errors_propagate_without_publishing_readings)
+{
+	float volts = 123, amps = 456;
+	struct drv8235_faults faults;
+
+	drv8235_emul_set_error(emul, -ETIMEDOUT);
+	zassert_equal(drv8235_read_voltage_current(dev, &volts, &amps), -ETIMEDOUT);
+	zassert_equal(volts, 123);
+	zassert_equal(amps, 456);
+	zassert_equal(drv8235_set_throttle(dev, 1), -ETIMEDOUT);
+	zassert_equal(drv8235_get_faults(dev, &faults), -ETIMEDOUT);
+	zassert_equal(drv8235_clear_faults(dev), -ETIMEDOUT);
+	zassert_equal(drv8235_coast(dev), -ETIMEDOUT);
+}
+
+ZTEST(drv8235, test_failed_command_returns_error_and_attempts_coast)
+{
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	drv8235_emul_fail_next_write(emul, 0x0D, -EIO);
+	zassert_equal(drv8235_set_throttle(dev, -1), -EIO);
+	assert_command(0, DRV8235_BRIDGE_COAST);
+}
+
+ZTEST(drv8235, test_failed_init_can_be_retried)
+{
+	drv8235_emul_fail_next_write(emul, 0x14, -EIO);
+	zassert_equal(drv8235_init(dev), -EIO);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x09) & 0x80, 0);
+	zassert_equal(drv8235_set_throttle(dev, 1), -EAGAIN);
+	zassert_ok(drv8235_init(dev));
+	zassert_ok(drv8235_set_throttle(dev, 1));
+}
+
+ZTEST(drv8235, test_invalid_arguments_do_not_write)
+{
+	float value;
 	enum drv8235_bridge_mode mode;
 
-	for (size_t i = 0; i < ARRAY_SIZE(limits); ++i) {
-		for (uint32_t step = 0; step <= 255U; ++step) {
-			const int32_t command = (int32_t)((uint64_t)limits[i] * step / 255U);
-
-			for (int sign = -1; sign <= 1; sign += 2) {
-				zassert_ok(drv8235_voltage_to_code(sign * command, limits[i],
-								 &code, &mode));
-				zassert_true((uint64_t)code * DRV8235_TARGET_FULL_SCALE_UV <=
-					     (uint64_t)limits[i] * DRV8235_TARGET_FULL_SCALE_CODE);
-				if (code == 0U) {
-					zassert_equal(mode, DRV8235_BRIDGE_COAST);
-				}
-			}
-		}
-	}
-	/* Ordinary nearest-code rounding is retained away from the hard limit. */
-	zassert_ok(drv8235_voltage_to_code(5000000, 6000000U, &code, &mode));
-	zassert_equal(code, 30U);
+	zassert_equal(drv8235_set_throttle(dev, NAN), -EINVAL);
+	zassert_equal(drv8235_set_throttle_volts(dev, INFINITY), -EINVAL);
+	zassert_equal(drv8235_set_throttle(NULL, 1), -EINVAL);
+	zassert_equal(drv8235_get_throttle(dev, NULL), -EINVAL);
+	zassert_equal(drv8235_get_throttle_volts(NULL, &value), -EINVAL);
+	zassert_equal(drv8235_get_throttle_raw(dev, NULL), -EINVAL);
+	zassert_equal(drv8235_get_bridge_control(NULL, &mode), -EINVAL);
+	zassert_equal(drv8235_read_voltage_current(dev, &value, NULL), -EINVAL);
+	zassert_equal(drv8235_emul_write_count(emul), 0);
 }
 
-ZTEST(drv8235_common, test_vmtr_uses_its_own_reference_scale)
-{
-	int32_t voltage_uv;
-
-	zassert_ok(drv8235_voltage_from_code(0xE4U, DRV8235_BRIDGE_FORWARD, &voltage_uv));
-	zassert_equal(voltage_uv, 38000000);
-	zassert_ok(drv8235_voltage_from_code(0xE4U, DRV8235_BRIDGE_REVERSE, &voltage_uv));
-	zassert_equal(voltage_uv, -38000000);
-}
-
-ZTEST(drv8235_common, test_inv_r_for_argus_coil)
-{
-	uint8_t scale;
-	uint8_t inv_r;
-
-	zassert_ok(drv8235_calculate_inv_r(25000U, &scale, &inv_r));
-	zassert_equal(scale, 2U);
-	zassert_equal(inv_r, 41U);
-}
-
-ZTEST(drv8235_common, test_common_helpers_reject_null)
-{
-	uint8_t code;
-	uint8_t inv_r;
-	int32_t value;
-
-	zassert_equal(drv8235_voltage_to_code(0, 6000000U, NULL, NULL), -EINVAL);
-	zassert_equal(drv8235_voltage_from_code(0U, DRV8235_BRIDGE_COAST, NULL), -EINVAL);
-	zassert_equal(drv8235_current_from_code(0U, 3700000U, NULL), -EINVAL);
-	zassert_equal(drv8235_decode_faults(0U, NULL), -EINVAL);
-	zassert_equal(drv8235_calculate_inv_r(25000U, NULL, &inv_r), -EINVAL);
-	zassert_equal(drv8235_calculate_inv_r(0U, &code, &inv_r), -EINVAL);
-	ARG_UNUSED(value);
-}
-
-ZTEST_SUITE(drv8235_common, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(drv8235, NULL, setup, before, NULL, NULL);

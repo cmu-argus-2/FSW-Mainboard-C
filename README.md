@@ -113,15 +113,22 @@ so a v5 build can never silently use v4 pins.
 
 ## DRV8235 magnetorquer driver
 
-The driver starts every H-bridge disabled, with target zero and coast selected.
-It enforces the board's 6 V command limit, preserves latched faults until the
-caller explicitly clears them, and does not control the shared `COIL_EN` rail.
+The driver follows the original Python and Embassy Rust interfaces: normalized
+throttle, volts and signed raw setters/getters, bridge mode, voltage/current
+readings and fault clearing. Zero commands brake; `drv8235_coast()` corresponds
+to Python's `None`. Getters return `-ENODATA` while coasting. Initialization
+finishes with EN_OUT enabled at target zero/coast; the application owns COIL_EN
+and calls `drv8235_init()` again after cycling power.
 
-Coil-current telemetry is an unsigned magnitude with a `current_valid` flag:
-enabled brake can retain nonzero current; coast and disabled outputs cannot
-claim a valid zero-current measurement. Current calibration remains provisional.
-Unlike Python's zero-throttle brake, `set_output_uv(0)` selects coast; call
-`drv8235_brake()` explicitly for brake.
+Only normalized throttle has the original 6 V scaling. Volts/raw retain the
+device-wide range. Voltage/current retain Python's conversion and reverse-sign
+convention; brake does not fabricate zero current, and coast readings may be
+stale/unsensed. Current calibration remains unconfirmed. Active-low NPOR and
+negative raw writes are corrected; fault clearing first selects zero/coast.
+
+The focused [ztests](tests/drivers/drv8235/README.md) are self-contained and do not
+require the external board library. No board, CI or west manifest changes are
+part of this driver.
 
 The interactive board test, build/flash steps, expected output, and safe manual
 test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).

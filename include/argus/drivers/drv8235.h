@@ -1,10 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-/**
- * @file drv8235.h
- * @brief Safe Zephyr interface for Argus DRV8235 magnetorquer drivers.
- */
-
 #ifndef ARGUS_DRIVERS_DRV8235_H_
 #define ARGUS_DRIVERS_DRV8235_H_
 
@@ -17,18 +12,6 @@
 extern "C" {
 #endif
 
-/* WSET_VSET code 255 represents approximately 42.67 V. */
-#define DRV8235_TARGET_FULL_SCALE_UV   42670000U
-#define DRV8235_TARGET_FULL_SCALE_CODE UINT8_MAX
-
-/* VMTR code 0xE4 represents 38 V (distinct from the target-voltage scale). */
-#define DRV8235_VMTR_REFERENCE_UV   38000000U
-#define DRV8235_VMTR_REFERENCE_CODE 0xE4U
-
-/* The data sheet defines IMTR code 0xC0 as the maximum current value. */
-#define DRV8235_IMTR_FULL_SCALE_CODE 0xC0U
-#define DRV8235_DUTY_FULL_SCALE_CODE 0x3FU
-
 enum drv8235_bridge_mode {
 	DRV8235_BRIDGE_COAST = 0,
 	DRV8235_BRIDGE_REVERSE = 1,
@@ -37,126 +20,63 @@ enum drv8235_bridge_mode {
 };
 
 struct drv8235_faults {
-	/* Aggregate FAULT, latched event flags, or an uncleared power-on reset. */
-	bool any;
+	uint8_t raw;
 	bool stall;
 	bool overcurrent;
 	bool overvoltage;
 	bool thermal_shutdown;
-	/* NPOR is active low; a reset requires reconfiguration before driving. */
+	/* NPOR is active low: a reset indication, not a UVLO measurement. */
 	bool power_on_reset;
-	uint8_t raw;
-};
-
-struct drv8235_telemetry {
-	int32_t voltage_uv;
-	/* Coil-current magnitude, never battery-input current or a signed direction. */
-	uint32_t current_ua;
-	uint16_t duty_permille;
-	uint8_t raw_voltage;
-	uint8_t raw_current;
-	uint8_t raw_duty;
-	enum drv8235_bridge_mode bridge_mode;
-	bool output_enabled;
-	/* Requires an enabled drive/brake path, valid configuration/status and IMTR. */
-	bool current_valid;
-};
-
-struct drv8235_limits {
-	uint32_t max_output_uv;
-	uint32_t coil_resistance_milliohm;
-	/* Provisional calibration; confirm against hardware before using for control. */
-	uint32_t imtr_full_scale_ua;
 };
 
 /**
- * Convert a signed voltage command into a target code and bridge direction.
- * Rounding is capped so the nominal encoded voltage never exceeds max_output_uv.
- * Commands rounding to code zero select coast.
+ * Configure I2C/PWM voltage control, internal VREF and the original 25-ohm
+ * coil compensation (INV_R_SCALE=2, INV_R=41). Finish enabled at target zero
+ * in coast, as in Python/Rust. Call again after cycling the device supply.
+ * The application owns COIL_EN and must provide stable power before this call.
  */
-int drv8235_voltage_to_code(int32_t voltage_uv, uint32_t max_output_uv, uint8_t *code,
-			    enum drv8235_bridge_mode *mode);
+int drv8235_init(const struct device *dev);
 
-/** Convert a VMTR code to signed microvolts using the bridge direction. */
-int drv8235_voltage_from_code(uint8_t code, enum drv8235_bridge_mode mode, int32_t *voltage_uv);
+/** Clamp throttle to [-1, 1], scaled to 6 V, truncating the register code.
+ * Zero (including values too small to encode) selects brake. */
+int drv8235_set_throttle(const struct device *dev, float throttle);
 
-/**
- * Convert an IMTR code to unsigned coil-current magnitude in microamps.
- * This only converts units; it cannot establish whether the sensing path is
- * active or determine the current direction. Use get_telemetry's current_valid.
- * The scale remains provisional pending hardware confirmation.
- */
-int drv8235_current_from_code(uint8_t code, uint32_t full_scale_ua, uint32_t *current_ua);
+/** Clamp volts to [-42.7, 42.7], rounding the register code; zero brakes.
+ * Like Python/Rust, this low-level interface does not impose the 6 V coil limit. */
+int drv8235_set_throttle_volts(const struct device *dev, float volts);
 
-/** Convert DUTY_READ (0..63) to duty cycle in per-mille (0..1000). */
-int drv8235_duty_from_code(uint8_t code, uint16_t *duty_permille);
+/** Clamp signed raw command to [-255, 255]; zero brakes. No 6 V coil limit. */
+int drv8235_set_throttle_raw(const struct device *dev, int16_t raw);
 
-/** Decode FAULT_STATUS without clearing it. */
-int drv8235_decode_faults(uint8_t raw, struct drv8235_faults *faults);
-
-/** Calculate the closest valid INV_R_SCALE and INV_R values. */
-int drv8235_calculate_inv_r(uint32_t coil_resistance_milliohm, uint8_t *scale_code, uint8_t *inv_r);
-
-/**
- * Restore the safe driver configuration after the COIL_EN rail was cycled.
- *
- * The rail must be stable before this call. On success the output is disabled,
- * the target is zero, the bridge is coasting, and latched power-up faults are
- * cleared. Overcurrent/overtemperature use latch-off recovery; stall detection
- * and soft start/stop are disabled for the coil load. Failure requires another
- * successful reconfigure before enabling or commanding a nonzero output.
- */
-int drv8235_reconfigure(const struct device *dev);
-
-/**
- * Enable or disable the H-bridge output. Neither operation changes COIL_EN.
- * Disabling also clears the target and selects coast. Enabling checks NPOR,
- * fault status, and the hardware configuration; -EAGAIN requires reconfigure.
- */
-int drv8235_set_enabled(const struct device *dev, bool enabled);
-
-/** Return whether the H-bridge output is enabled. */
-int drv8235_is_enabled(const struct device *dev, bool *enabled);
-
-/**
- * Command signed coil voltage in microvolts.
- *
- * Zero selects coast. Values outside the devicetree safety limit are rejected
- * with -ERANGE. Same-direction updates do not coast; direction changes coast
- * before applying the new target and direction. This is not a guarantee of zero
- * coil current during reversal. This call does not enable the output or rail.
- */
-int drv8235_set_output_uv(const struct device *dev, int32_t voltage_uv);
-
-/** Set target voltage to zero and place the bridge in high-impedance coast. */
+/** Target zero and high-impedance coast: the C equivalent of Python's None.
+ * Does not disable EN_OUT or switch the shared supply. */
 int drv8235_coast(const struct device *dev);
 
-/** Set target voltage to zero and actively brake the attached coil. */
-int drv8235_brake(const struct device *dev);
+/** Read target settings, not measured voltage. Coast returns -ENODATA without
+ * changing the output argument (Python/Rust return None); brake returns zero.
+ * The normalized getter retains Python's intermediate rounding to 3 decimals. */
+int drv8235_get_throttle(const struct device *dev, float *throttle);
+int drv8235_get_throttle_volts(const struct device *dev, float *volts);
+int drv8235_get_throttle_raw(const struct device *dev, int16_t *raw);
+int drv8235_get_bridge_control(const struct device *dev, enum drv8235_bridge_mode *mode);
 
 /**
- * Read voltage, current, duty cycle, output enable, and bridge direction.
- * current_ua is a coil-current magnitude, not a signed measurement and not
- * battery-input current. Enabled low-side brake can still carry sensed current.
- * Coast, disabled output, reset/fault/unconfigured state, or IMTR above 0xC0
- * report current_valid=false. Other readings and raw_current are retained;
- * current_ua=0 then is only a placeholder, not a zero-current measurement.
- * Sensing-path validity does not establish calibration or sample freshness.
- * The current scale remains provisional pending hardware calibration.
+ * Python-compatible readings: VMTR * 0.16733 V, IMTR * 0.01451 A. Both are
+ * negated in reverse; the sign is inferred from the command, not measured.
+ * Brake does not force current to zero. Coast may return stale/unsensed current;
+ * these readings do not establish sensing validity or battery-input current.
+ * Current calibration remains provisional pending hardware confirmation.
+ * Output arguments are unchanged on an I2C error.
  */
-int drv8235_get_telemetry(const struct device *dev, struct drv8235_telemetry *telemetry);
+int drv8235_read_voltage_current(const struct device *dev, float *volts, float *amps);
 
-/** Read fault flags without clearing the latched status. */
+/** Read flags and, if FAULT is set, clear them afterwards as in Python/Rust.
+ * Clearing first selects zero/coast to avoid restarting the previous command.
+ * NPOR decoding is corrected; a detected reset requires init before driving. */
 int drv8235_get_faults(const struct device *dev, struct drv8235_faults *faults);
 
-/**
- * Disable/coast/zero the output before clearing latched faults. Never re-enables
- * the bridge. Clearing faults does not substitute for reconfigure after reset.
- */
+/** Select zero/coast and clear faults. Does not replace init after a reset. */
 int drv8235_clear_faults(const struct device *dev);
-
-/** Read immutable safety/calibration limits from devicetree. */
-int drv8235_get_limits(const struct device *dev, struct drv8235_limits *limits);
 
 #ifdef __cplusplus
 }

@@ -10,7 +10,6 @@ project(drv8235_diag)
 target_sources(app PRIVATE
         src/main.c
         ../../src/drivers/drv8235.c
-        ../../src/drivers/drv8235_common.c
 )
 
 target_include_directories(app PRIVATE
