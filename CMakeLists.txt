@@ -11,6 +11,7 @@ project(FSW-Mainboard-C)
 target_sources(app PRIVATE
         src/main.c
         src/drivers/max17205.c
+        src/drivers/opt4003.c
 )
 
 target_include_directories(app PRIVATE
