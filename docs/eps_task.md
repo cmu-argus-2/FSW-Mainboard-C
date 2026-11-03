@@ -34,12 +34,12 @@ must not be represented as a successful sensor read.
 
 ## Scope
 
-Only these paths differ from the issue's original base `9c8d027`:
+Only these paths differ from the updated main-branch base `fcbfa30`:
 - `include/argus/tasks/eps.h`
 - `src/tasks/eps.c`
 - `src/tasks/eps_runner.c`
 - `src/main.c` (start the EPS runner)
-- `CMakeLists.txt` (add only the two task sources)
+- `CMakeLists.txt` (add the two task sources alongside main's existing sources)
 - `prj.conf` (main-thread stack size for console formatting)
 - `tests/tasks/eps/**`
 - `docs/eps_task.md`

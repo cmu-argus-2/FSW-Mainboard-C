@@ -9,6 +9,7 @@ project(FSW-Mainboard-C)
 
 target_sources(app PRIVATE
         src/main.c
+        src/drivers/opt4003.c
         src/tasks/eps.c
         src/tasks/eps_runner.c
 )

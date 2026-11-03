@@ -1,0 +1,12 @@
+tests:
+  argus.drivers.opt4003:
+    tags:
+      - drivers
+      - sensors
+    platform_allow:
+      # What CI runs.
+      - native_sim/native/64
+      # For running locally on macOS, where native_sim can't build.
+      - qemu_cortex_m3
+    integration_platforms:
+      - native_sim/native/64
