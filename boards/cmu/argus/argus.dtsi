@@ -185,6 +185,27 @@ gpio0_lo: &gpio0 {
 	pinctrl-names = "default";
 	status = "okay";
 
+	main_power_monitor: adm1176@40 {
+		compatible = "adi,adm1176";
+		reg = <0x40>;
+		rshunt-micro-ohms = <10000>;
+		status = "okay";
+	};
+
+	gps_power_monitor: adm1176@41 {
+		compatible = "adi,adm1176";
+		reg = <0x41>;
+		rshunt-micro-ohms = <10000>;
+		status = "okay";
+	};
+
+	radio_power_monitor: adm1176@42 {
+		compatible = "adi,adm1176";
+		reg = <0x42>;
+		rshunt-micro-ohms = <10000>;
+		status = "okay";
+	};
+
 	rtc_mfd: ds3231@68 {
 		compatible = "maxim,ds3231-mfd";
 		reg = <0x68>;
