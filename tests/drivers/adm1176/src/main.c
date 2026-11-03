@@ -186,18 +186,37 @@ ZTEST(adm1176, test_failed_threshold_writes_keep_last_successful_cache)
 
 ZTEST(adm1176, test_device_errors_reports_and_clears_adc_alert)
 {
-	bool adc_alert;
+	struct adm1176_errors errors;
 
 	s->status = ADM1176_STATUS_ADC_ALERT;
-	zassert_ok(adm1176_device_errors(dev, &adc_alert));
-	zassert_true(adc_alert);
+	zassert_ok(adm1176_device_errors(dev, &errors));
+	zassert_equal(errors.count, 1);
+	zassert_equal(errors.codes[0], 0x16); /* Original Python error code. */
 	zassert_equal(s->status, 0);
-	zassert_ok(adm1176_device_errors(dev, &adc_alert));
-	zassert_false(adc_alert);
+	zassert_ok(adm1176_device_errors(dev, &errors));
+	zassert_equal(errors.count, 0);
+	s->status = ADM1176_STATUS_HOT_SWAP_ALERT;
+	zassert_ok(adm1176_device_errors(dev, &errors));
+	zassert_equal(errors.count, 0); /* Python reports only ADC_ALERT here. */
+	zassert_equal(s->status, ADM1176_STATUS_HOT_SWAP_ALERT);
+}
+
+ZTEST(adm1176, test_device_errors_propagates_read_and_clear_failures)
+{
+	struct adm1176_errors errors = {.count = 1, .codes = {0x16}};
+
+	s->status = ADM1176_STATUS_ADC_ALERT;
+	s->error = -ETIMEDOUT;
+	s->skip = 1;
+	zassert_equal(adm1176_device_errors(dev, &errors), -ETIMEDOUT);
+	zassert_equal(errors.count, 0);
+	zassert_equal(s->status, ADM1176_STATUS_ADC_ALERT);
 	s->status = ADM1176_STATUS_ADC_ALERT;
 	s->error = -EIO;
 	s->skip = 3; /* Status succeeds; the following CLEAR write fails. */
-	zassert_equal(adm1176_device_errors(dev, &adc_alert), -EIO);
+	zassert_equal(adm1176_device_errors(dev, &errors), -EIO);
+	zassert_equal(errors.count, 1);
+	zassert_equal(errors.codes[0], 0x16);
 	zassert_equal(s->status, ADM1176_STATUS_ADC_ALERT);
 }
 

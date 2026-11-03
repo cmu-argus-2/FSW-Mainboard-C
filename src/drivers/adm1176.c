@@ -233,20 +233,20 @@ int adm1176_clear(const struct device *dev)
 	return ret;
 }
 
-int adm1176_device_errors(const struct device *dev, bool *adc_alert)
+int adm1176_device_errors(const struct device *dev, struct adm1176_errors *errors)
 {
 	uint8_t status;
 	int ret;
 
-	if (adc_alert == NULL) {
+	if (errors == NULL) {
 		return -EINVAL;
 	}
+	*errors = (struct adm1176_errors){0};
 	ret = adm1176_status(dev, &status);
-	if (ret == 0) {
-		*adc_alert = (status & ADM1176_STATUS_ADC_ALERT) != 0U;
-		if (*adc_alert) {
-			ret = adm1176_clear(dev);
-		}
+	if (ret == 0 && (status & ADM1176_STATUS_ADC_ALERT) != 0U) {
+		errors->codes[0] = ADM1176_PWR_MON_ADC_ALERT_OVERCURRENT;
+		errors->count = 1;
+		ret = adm1176_clear(dev);
 	}
 	return ret;
 }

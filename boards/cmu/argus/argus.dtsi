@@ -206,6 +206,13 @@ gpio0_lo: &gpio0 {
 		status = "okay";
 	};
 
+	jetson_power_monitor: adm1176@46 {
+		compatible = "adi,adm1176";
+		reg = <0x46>;
+		rshunt-micro-ohms = <10000>;
+		status = "okay";
+	};
+
 	rtc_mfd: ds3231@68 {
 		compatible = "maxim,ds3231-mfd";
 		reg = <0x68>;

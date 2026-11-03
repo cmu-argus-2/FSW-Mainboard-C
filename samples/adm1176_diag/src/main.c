@@ -12,6 +12,7 @@ static const struct {
 	{"main", DEVICE_DT_GET(DT_NODELABEL(main_power_monitor))},
 	{"GPS", DEVICE_DT_GET(DT_NODELABEL(gps_power_monitor))},
 	{"radio", DEVICE_DT_GET(DT_NODELABEL(radio_power_monitor))},
+	{"Jetson", DEVICE_DT_GET(DT_NODELABEL(jetson_power_monitor))},
 };
 
 static void print_monitor(const char *name, const struct device *dev)
