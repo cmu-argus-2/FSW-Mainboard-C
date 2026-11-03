@@ -167,23 +167,35 @@ ZTEST(drv8235, test_same_direction_updates_do_not_insert_coast)
 	zassert_equal(bridge->value & 3, DRV8235_BRIDGE_FORWARD);
 }
 
-ZTEST(drv8235, test_voltage_current_match_python_in_all_modes)
+ZTEST(drv8235, test_voltage_current_follow_eps_conversion_in_all_modes)
 {
 	const enum drv8235_bridge_mode modes[] = {
 		DRV8235_BRIDGE_FORWARD, DRV8235_BRIDGE_REVERSE,
 		DRV8235_BRIDGE_BRAKE, DRV8235_BRIDGE_COAST,
 	};
 
+	const struct {
+		uint8_t raw;
+		float amps;
+	} currents[] = {
+		{0, 0.0f},
+		{50, 0.963541667f},
+		{96, 1.85f},
+		{192, 3.7f},
+	};
+
 	drv8235_emul_set_reg(emul, 0x04, 100);
-	drv8235_emul_set_reg(emul, 0x05, 50);
 	for (size_t i = 0; i < ARRAY_SIZE(modes); ++i) {
 		float volts, amps;
 		int sign = modes[i] == DRV8235_BRIDGE_REVERSE ? -1 : 1;
 
 		drv8235_emul_set_reg(emul, 0x0D, 0x3C | modes[i]);
-		zassert_ok(drv8235_read_voltage_current(dev, &volts, &amps));
-		zassert_within(volts, sign * 16.733f, 0.0001f);
-		zassert_within(amps, sign * 0.7255f, 0.0001f);
+		for (size_t j = 0; j < ARRAY_SIZE(currents); ++j) {
+			drv8235_emul_set_reg(emul, 0x05, currents[j].raw);
+			zassert_ok(drv8235_read_voltage_current(dev, &volts, &amps));
+			zassert_within(volts, sign * 16.733f, 0.0001f);
+			zassert_within(amps, sign * currents[j].amps, 0.0001f);
+		}
 	}
 	/* In particular, brake must retain nonzero IMTR, not fabricate zero. */
 }

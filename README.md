@@ -121,9 +121,10 @@ finishes with EN_OUT enabled at target zero/coast; the application owns COIL_EN
 and calls `drv8235_init()` again after cycling power.
 
 Only normalized throttle has the original 6 V scaling. Volts/raw retain the
-device-wide range. Voltage/current retain Python's conversion and reverse-sign
-convention; brake does not fabricate zero current, and coast readings may be
-stale/unsensed. Current calibration remains unconfirmed. Active-low NPOR and
+device-wide range. Voltage and reverse-sign behavior follow Python; current uses
+the team's EPS exception, `raw * 3.7 / 192 A`. Brake does not fabricate zero
+current, and coast readings may be stale/unsensed. Current calibration remains
+unconfirmed. Active-low NPOR and
 negative raw writes are corrected; fault clearing first selects zero/coast.
 
 The focused [ztests](tests/drivers/drv8235/README.md) are self-contained and do not

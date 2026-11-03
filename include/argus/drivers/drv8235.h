@@ -61,8 +61,9 @@ int drv8235_get_throttle_raw(const struct device *dev, int16_t *raw);
 int drv8235_get_bridge_control(const struct device *dev, enum drv8235_bridge_mode *mode);
 
 /**
- * Python-compatible readings: VMTR * 0.16733 V, IMTR * 0.01451 A. Both are
- * negated in reverse; the sign is inferred from the command, not measured.
+ * Voltage: VMTR * 0.16733 V. Current: IMTR * 3.7 / 192 A, following the team's
+ * EPS conversion exception to Python. Both are negated in reverse; the sign
+ * is inferred from the command, not measured.
  * Brake does not force current to zero. Coast may return stale/unsensed current;
  * these readings do not establish sensing validity or battery-input current.
  * Current calibration remains provisional pending hardware confirmation.

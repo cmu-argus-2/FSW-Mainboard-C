@@ -76,9 +76,10 @@ a pulse: entering disarm or Ctrl+C is not an independent emergency cutoff.
 
 ## Reading semantics
 
-Voltage/current use the old Python/Rust coefficients (0.16733 V and 0.01451 A
-per count). Reverse negates both by command convention; IMTR does not measure
-current direction. Brake retains a nonzero IMTR reading. Coast can return a
+Voltage uses the original 0.16733 V per count. Current follows the team's EPS
+exception: raw * 3.7 / 192 A (raw * 3700 / 192 mA), rather than Python's
+0.01451 A per count. Reverse negates both by command convention; IMTR does not
+measure current direction. Brake retains a nonzero IMTR reading. Coast can return a
 stale/unsensed reading, which must not be interpreted as a valid zero or as
 battery-input current. Current calibration is still pending hardware confirmation.
 

@@ -32,7 +32,8 @@ enum {
 
 #define VOLTS_PER_INDEX 0.16733f
 #define INDEX_PER_VOLT  5.9761f
-#define AMPS_PER_INDEX  0.01451f
+/* Team's EPS conversion exception to the original Python coefficient. */
+#define AMPS_PER_INDEX  (3.7f / 192.0f)
 #define THROTTLE_MAX    (6.0f / 42.67f)
 
 struct drv8235_config {

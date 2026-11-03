@@ -22,8 +22,8 @@ The focused tests cover:
 - Boot/init settings, disabling before protected writes, and reinitialization.
 - Python/Rust throttle cases: normalized, volts and signed raw commands,
   clamping, quantization, getters, zero/brake and None/coast equivalents.
-- Python-compatible voltage/current conversion in all four bridge modes,
-  including nonzero brake current.
+- Python-compatible voltage/sign behavior and the team's EPS current conversion
+  (raw * 3.7 / 192 A) in all four modes, including nonzero brake current.
 - Correct active-low NPOR, fault reporting/clearing, and reset recovery.
 - I2C error propagation, failed command cleanup and invalid arguments.
 
