@@ -194,6 +194,8 @@ static DEVICE_API(fuel_gauge, max17205_api) = {
 };
 
 #define MAX17205_DEFINE(inst)                                      \
+    BUILD_ASSERT(DT_INST_PROP(inst, rsense_micro_ohms) > 0,        \
+                 "rsense-micro-ohms must be greater than 0");      \
     static const struct max17205_config max17205_config_##inst = { \
         .main = I2C_DT_SPEC_INST_GET(inst),                        \
         .shadow = {.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),        \

@@ -207,11 +207,11 @@ gpio0_lo: &gpio0 {
 		compatible = "maxim,ds3231-mfd";
 		reg = <0x68>;
 		status = "okay";
-  };
 
-	rtc: rtc {
-		compatible = "maxim,ds3231-rtc";
-		status = "okay";
+		rtc: rtc {
+			compatible = "maxim,ds3231-rtc";
+			status = "okay";
+		};
 	};
 
 	/* Battery board fuel gauge. Shadow RAM answers at 0x0B too (see binding). */
