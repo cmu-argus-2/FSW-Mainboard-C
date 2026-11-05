@@ -1,0 +1,13 @@
+sample:
+  name: Argus MAX17205 demo
+  description: Print every MAX17205 fuel gauge property every 2 seconds
+tests:
+  sample.argus.max17205_demo:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - fuel_gauge
