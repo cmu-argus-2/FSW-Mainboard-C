@@ -73,6 +73,7 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 | `cmake/` | Build helpers (git version header printed at boot) |
 | `src/`, `include/argus/` | Application code |
 | `tests/`, `test_vectors/` | Tests |
+| `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
 
 ## Hardware revisions
 
@@ -109,3 +110,26 @@ so a v5 build can never silently use v4 pins.
 - `PERIPH_PWR_EN` (GPIO42) must be driven high before anything on I2C0/I2C1 responds.
 - `WDT_EN` (GPIO15) arms the external watchdog; once armed, `WDT_WDI` (GPIO2) must be toggled or the board resets. Nothing drives it by default.
 - Polarity of the `*_FLT` and `BATT_ALRT` inputs has not been checked against the schematic.
+
+## DRV8235 magnetorquer driver
+
+The driver follows the original Python and Embassy Rust interfaces: normalized
+throttle, volts and signed raw setters/getters, bridge mode, voltage/current
+readings and fault clearing. Zero commands brake; `drv8235_coast()` corresponds
+to Python's `None`. Getters return `-ENODATA` while coasting. Initialization
+finishes with EN_OUT enabled at target zero/coast; the application owns COIL_EN
+and calls `drv8235_init()` again after cycling power.
+
+Only normalized throttle has the original 6 V scaling. Volts/raw retain the
+device-wide range. Voltage and reverse-sign behavior follow Python; current uses
+the team's EPS exception, `raw * 3.7 / 192 A`. Brake does not fabricate zero
+current, and coast readings may be stale/unsensed. Current calibration remains
+unconfirmed. Active-low NPOR and
+negative raw writes are corrected; fault clearing first selects zero/coast.
+
+The focused [ztests](tests/drivers/drv8235/README.md) are self-contained and do not
+require the external board library. No board, CI or west manifest changes are
+part of this driver.
+
+The interactive board test, build/flash steps, expected output, and safe manual
+test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).

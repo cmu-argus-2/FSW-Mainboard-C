@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: Test-only DRV8235 I2C register emulator, independent of the board library.
+
+compatible: "ti,drv8235"
+
+include: i2c-device.yaml
