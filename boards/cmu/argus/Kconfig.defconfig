@@ -9,6 +9,15 @@ config USB_SELF_POWERED
 config REGULATOR
 	default y
 
+# The DesignWare I2C driver derives SCL timing from this (MHz). RP2350 clk_sys
+# is 150 MHz; the driver default of 32 runs the bus ~4.7x too fast.
+if I2C_DW
+
+config I2C_DW_CLOCK_SPEED
+	default 150
+
+endif # I2C_DW
+
 # Console and shell go over USB CDC ACM, like CircuitPython's REPL does.
 source "boards/common/usb/Kconfig.cdc_acm_serial.defconfig"
 
