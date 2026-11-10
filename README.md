@@ -73,6 +73,7 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 | `cmake/` | Build helpers (git version header printed at boot) |
 | `src/`, `include/argus/` | Application code |
 | `tests/`, `test_vectors/` | Tests |
+| `samples/adm1176_diag/` | ADM1176 telemetry diagnostic and board-test instructions |
 | `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
 
 ## Hardware revisions
