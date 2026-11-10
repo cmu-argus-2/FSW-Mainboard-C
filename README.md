@@ -120,16 +120,26 @@ to Python's `None`. Getters return `-ENODATA` while coasting. Initialization
 finishes with EN_OUT enabled at target zero/coast; the application owns COIL_EN
 and calls `drv8235_init()` again after cycling power.
 
-Only normalized throttle has the original 6 V scaling. Volts/raw retain the
-device-wide range. Voltage and reverse-sign behavior follow Python; current uses
-the team's EPS exception, `raw * 3.7 / 192 A`. Brake does not fabricate zero
+Normalized throttle scales to the DT coil voltage limit (6 V on Argus).
+Volts/raw reject commands exceeding that limit; voltage rounding cannot exceed
+the largest safe code (35 at 6 V). Reversals coast before changing magnitude.
+Voltage and reverse-sign behavior follow Python; current uses
+the team's EPS exception, `raw * full_scale_A / 192` (default `raw * 3.7 / 192 A`). Brake does not fabricate zero
 current, and coast readings may be stale/unsensed. Current calibration remains
 unconfirmed. Active-low NPOR and
 negative raw writes are corrected; fault clearing first selects zero/coast.
 
-The focused [ztests](tests/drivers/drv8235/README.md) are self-contained and do not
-require the external board library. No board, CI or west manifest changes are
-part of this driver.
+Boot initializes software only. After enabling the DT `vm-supply`, the application
+calls `drv8235_init()` and can retry if the chip was unavailable. A latched FAULT
+does not independently block setters; fault handling remains application policy.
+
+The [ztests](tests/drivers/drv8235/README.md) and hardware use the same binding
+from the Board Library commit pinned in `cmake/drv8235_board_lib.cmake`.
+Their first configure fetches it (network required), or accepts a local checkout
+via `-DARGUS_BOARD_LIB=/absolute/path` for offline builds.
+Coil resistance, voltage limit, current full scale and supply come from that binding.
+The main application retains its in-tree board, while the diagnostic explicitly
+selects the shared board. Board files, west manifest and CI are unchanged.
 
 The interactive board test, build/flash steps, expected output, and safe manual
 test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).

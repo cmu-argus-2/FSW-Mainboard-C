@@ -9,6 +9,7 @@
 #include <math.h>
 
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/regulator.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
@@ -32,18 +33,53 @@ enum {
 
 #define VOLTS_PER_INDEX 0.16733f
 #define INDEX_PER_VOLT  5.9761f
-/* Team's EPS conversion exception to the original Python coefficient. */
-#define AMPS_PER_INDEX  (3.7f / 192.0f)
-#define THROTTLE_MAX    (6.0f / 42.67f)
+#define TARGET_FULL_SCALE_UV 42670000U
 
 struct drv8235_config {
 	struct i2c_dt_spec bus;
+	const struct device *supply;
+	uint32_t max_output_uv;
+	uint32_t resistance_milliohm;
+	uint32_t imtr_full_scale_ua;
 };
 
 struct drv8235_data {
 	struct k_mutex lock;
 	bool initialized;
 };
+
+static uint8_t max_code(const struct drv8235_config *config)
+{
+	/* Floor the safety ceiling so rounding cannot command more than the limit. */
+	return (uint64_t)config->max_output_uv * 255U / TARGET_FULL_SCALE_UV;
+}
+
+static int supply_ready(const struct drv8235_config *config)
+{
+	if (!device_is_ready(config->supply) || !i2c_is_ready_dt(&config->bus)) {
+		return -ENODEV;
+	}
+	return regulator_is_enabled(config->supply) ? 0 : -EAGAIN;
+}
+
+static int resistance_settings(uint32_t milliohm, uint8_t *scale, uint8_t *inv_r)
+{
+	const uint32_t scales[] = {2, 64, 1024, 8192};
+
+	if (milliohm == 0U) {
+		return -EINVAL;
+	}
+	for (int i = ARRAY_SIZE(scales) - 1; i >= 0; --i) {
+		uint64_t value = ((uint64_t)scales[i] * 1000U + milliohm / 2U) / milliohm;
+
+		if (value >= 1U && value <= 255U) {
+			*scale = i;
+			*inv_r = value;
+			return 0;
+		}
+	}
+	return -ERANGE;
+}
 
 static int read_reg(const struct device *dev, uint8_t reg, uint8_t *value)
 {
@@ -99,6 +135,12 @@ int drv8235_init(const struct device *dev)
 	}
 	const struct drv8235_config *config = dev->config;
 	struct drv8235_data *data = dev->data;
+	uint8_t scale, inv_r;
+	int ret = resistance_settings(config->resistance_milliohm, &scale, &inv_r);
+
+	if (ret != 0) {
+		return ret;
+	}
 	/* Only the original Python/Rust settings; preserve unrelated device bits. */
 	const struct {
 		uint8_t reg, mask, value;
@@ -108,15 +150,19 @@ int drv8235_init(const struct device *dev)
 		{REG_CTRL0, BIT(4) | BIT(3), BIT(4) | BIT(3)},
 		{TARGET, 0xFF, 0},
 		{CONFIG3, BIT(4), BIT(4)},
-		{RC_CTRL2, BIT(7) | BIT(6), BIT(7)},
-		{RC_CTRL3, 0xFF, 41},
+		{RC_CTRL2, BIT(7) | BIT(6), scale << 6},
+		{RC_CTRL3, 0xFF, inv_r},
 		{CONFIG0, CLR_FLT, CLR_FLT},
 		{CONFIG0, EN_OUT, EN_OUT},
 	};
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 	data->initialized = false;
-	int ret = i2c_is_ready_dt(&config->bus) ? 0 : -ENODEV;
+	ret = supply_ready(config);
+	if (ret != 0) {
+		k_mutex_unlock(&data->lock);
+		return ret;
+	}
 
 	for (size_t i = 0; ret == 0 && i < ARRAY_SIZE(settings); ++i) {
 		ret = update_reg(dev, settings[i].reg, settings[i].mask, settings[i].value);
@@ -137,10 +183,22 @@ static int drive(const struct device *dev, enum drv8235_bridge_mode mode, uint8_
 		return -EINVAL;
 	}
 	struct drv8235_data *data = dev->data;
-	uint8_t status;
+	const struct drv8235_config *config = dev->config;
+	uint8_t status, bridge;
+
+	if (index > max_code(config)) {
+		return -ERANGE;
+	}
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	int ret = read_reg(dev, FAULT_STATUS, &status);
+	int ret = supply_ready(config);
+
+	if (ret != 0) {
+		data->initialized = false;
+		k_mutex_unlock(&data->lock);
+		return ret;
+	}
+	ret = read_reg(dev, FAULT_STATUS, &status);
 
 	if (ret == 0 && (status & NPOR) == 0U) {
 		data->initialized = false;
@@ -148,8 +206,16 @@ static int drive(const struct device *dev, enum drv8235_bridge_mode mode, uint8_
 	if (ret == 0 && !data->initialized) {
 		ret = -EAGAIN;
 	}
-	if (ret == 0 && (status & FAULT) != 0U) {
-		ret = -EIO;
+	if (ret == 0) {
+		ret = read_reg(dev, CONFIG4, &bridge);
+	}
+	if (ret == 0 &&
+	    (((bridge & BRIDGE_MASK) == DRV8235_BRIDGE_FORWARD &&
+	      mode == DRV8235_BRIDGE_REVERSE) ||
+	     ((bridge & BRIDGE_MASK) == DRV8235_BRIDGE_REVERSE &&
+	      mode == DRV8235_BRIDGE_FORWARD))) {
+		/* Remove the old polarity before changing the target magnitude. */
+		ret = update_reg(dev, CONFIG4, BRIDGE_MASK, DRV8235_BRIDGE_COAST);
 	}
 	if (ret == 0) {
 		ret = write_reg(dev, TARGET, index);
@@ -166,11 +232,15 @@ static int drive(const struct device *dev, enum drv8235_bridge_mode mode, uint8_
 
 int drv8235_set_throttle(const struct device *dev, float throttle)
 {
-	if (!isfinite(throttle)) {
+	if (dev == NULL || !isfinite(throttle)) {
 		return -EINVAL;
 	}
-	float fraction = CLAMP(throttle, -1.0f, 1.0f) * THROTTLE_MAX;
+	const struct drv8235_config *config = dev->config;
+	float fraction = CLAMP(throttle, -1.0f, 1.0f) *
+		((float)config->max_output_uv / TARGET_FULL_SCALE_UV);
 	uint8_t index = (uint8_t)((fraction < 0 ? -fraction : fraction) * 255.0f);
+
+	index = MIN(index, max_code(config));
 	enum drv8235_bridge_mode mode = index == 0 ? DRV8235_BRIDGE_BRAKE :
 		(throttle < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD);
 
@@ -179,20 +249,32 @@ int drv8235_set_throttle(const struct device *dev, float throttle)
 
 int drv8235_set_throttle_volts(const struct device *dev, float volts)
 {
-	if (!isfinite(volts)) {
+	if (dev == NULL || !isfinite(volts)) {
 		return -EINVAL;
 	}
-	volts = CLAMP(volts, -42.7f, 42.7f);
+	const struct drv8235_config *config = dev->config;
+	float magnitude = volts < 0 ? -volts : volts;
+
+	if (magnitude > config->max_output_uv / 1000000.0f) {
+		return -ERANGE;
+	}
 	unsigned int index = (unsigned int)((volts < 0 ? -volts : volts) * INDEX_PER_VOLT + 0.5f);
 	enum drv8235_bridge_mode mode = volts == 0 ? DRV8235_BRIDGE_BRAKE :
 		(volts < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD);
 
-	return drive(dev, mode, (uint8_t)MIN(index, 255U));
+	return drive(dev, mode, (uint8_t)MIN(index, max_code(config)));
 }
 
 int drv8235_set_throttle_raw(const struct device *dev, int16_t raw)
 {
-	int value = CLAMP((int)raw, -255, 255);
+	int value = raw;
+
+	if (dev == NULL) {
+		return -EINVAL;
+	}
+	if ((value < 0 ? -value : value) > max_code(dev->config)) {
+		return -ERANGE;
+	}
 	enum drv8235_bridge_mode mode = value == 0 ? DRV8235_BRIDGE_BRAKE :
 		(value < 0 ? DRV8235_BRIDGE_REVERSE : DRV8235_BRIDGE_FORWARD);
 
@@ -260,7 +342,10 @@ int drv8235_get_throttle(const struct device *dev, float *throttle)
 		int magnitude = raw < 0 ? -raw : raw;
 		float rounded = ((magnitude * 1000 + 127) / 255) / 1000.0f;
 
-		*throttle = (raw < 0 ? -rounded : rounded) / THROTTLE_MAX;
+		const struct drv8235_config *config = dev->config;
+
+		*throttle = (raw < 0 ? -rounded : rounded) /
+			((float)config->max_output_uv / TARGET_FULL_SCALE_UV);
 	}
 	return ret;
 }
@@ -318,7 +403,10 @@ int drv8235_read_voltage_current(const struct device *dev, float *volts, float *
 		int sign = (bridge & BRIDGE_MASK) == DRV8235_BRIDGE_REVERSE ? -1 : 1;
 
 		*volts = sign * voltage * VOLTS_PER_INDEX;
-		*amps = sign * current * AMPS_PER_INDEX;
+		const struct drv8235_config *config = dev->config;
+
+		/* Preserve the team's EPS /192 convention with the DT calibration. */
+		*amps = sign * current * (config->imtr_full_scale_ua / 1000000.0f / 192.0f);
 	}
 	k_mutex_unlock(&data->lock);
 	return ret;
@@ -378,13 +466,21 @@ static __maybe_unused int drv8235_device_init(const struct device *dev)
 	struct drv8235_data *data = dev->data;
 
 	k_mutex_init(&data->lock);
-	return drv8235_init(dev);
+	return 0; /* The application powers VM and explicitly calls drv8235_init(). */
 }
 
 #define DRV8235_DEFINE(inst)                                                         \
+	BUILD_ASSERT(DT_INST_PROP(inst, max_output_microvolt) > 0 &&                 \
+		     DT_INST_PROP(inst, max_output_microvolt) <= TARGET_FULL_SCALE_UV); \
+	BUILD_ASSERT(DT_INST_PROP(inst, coil_resistance_milliohm) > 0);               \
+	BUILD_ASSERT(DT_INST_PROP(inst, imtr_full_scale_microamp) > 0);               \
 	static struct drv8235_data drv8235_data_##inst;                              \
 	static const struct drv8235_config drv8235_config_##inst = {                 \
 		.bus = I2C_DT_SPEC_INST_GET(inst),                                   \
+		.supply = DEVICE_DT_GET(DT_INST_PHANDLE(inst, vm_supply)),            \
+		.max_output_uv = DT_INST_PROP(inst, max_output_microvolt),           \
+		.resistance_milliohm = DT_INST_PROP(inst, coil_resistance_milliohm),  \
+		.imtr_full_scale_ua = DT_INST_PROP(inst, imtr_full_scale_microamp),   \
 	};                                                                          \
 	DEVICE_DT_INST_DEFINE(inst, drv8235_device_init, NULL, &drv8235_data_##inst,   \
 			      &drv8235_config_##inst, POST_KERNEL,                     \

@@ -30,22 +30,29 @@ struct drv8235_faults {
 };
 
 /**
- * Configure I2C/PWM voltage control, internal VREF and the original 25-ohm
- * coil compensation (INV_R_SCALE=2, INV_R=41). Finish enabled at target zero
+ * Configure I2C/PWM voltage control, internal VREF and coil compensation from
+ * DT coil-resistance-milliohm (25 ohm gives scale=2, INV_R=41). Finish enabled at target zero
  * in coast, as in Python/Rust. Call again after cycling the device supply.
- * The application owns COIL_EN and must provide stable power before this call.
+ * Zephyr device readiness only indicates software readiness; boot does no I2C.
+ * The application owns vm-supply and must enable it before this call (-EAGAIN
+ * if off). A failed probe/init can be retried without rebooting.
  */
 int drv8235_init(const struct device *dev);
 
-/** Clamp throttle to [-1, 1], scaled to 6 V, truncating the register code.
+/** Clamp throttle to [-1, 1], scaled to DT max-output-microvolt (6 V on Argus),
+ * truncating the register code.
  * Zero (including values too small to encode) selects brake. */
 int drv8235_set_throttle(const struct device *dev, float throttle);
 
-/** Clamp volts to [-42.7, 42.7], rounding the register code; zero brakes.
- * Like Python/Rust, this low-level interface does not impose the 6 V coil limit. */
+/** Round volts to a register code; zero brakes. Reject magnitudes above the DT
+ * coil limit with -ERANGE. Cap rounding at the largest code within that limit.
+ * A rejected command leaves the previous output unchanged. */
 int drv8235_set_throttle_volts(const struct device *dev, float volts);
 
-/** Clamp signed raw command to [-255, 255]; zero brakes. No 6 V coil limit. */
+/** Signed raw magnitude with zero selecting brake. Return -ERANGE without
+ * changing output if the code exceeds the DT coil limit (35 for 6 V).
+ * All setters coast before polarity reversal, and require init after reset.
+ * Latched FAULT does not block setters; the application owns fault policy. */
 int drv8235_set_throttle_raw(const struct device *dev, int16_t raw);
 
 /** Target zero and high-impedance coast: the C equivalent of Python's None.
@@ -61,7 +68,8 @@ int drv8235_get_throttle_raw(const struct device *dev, int16_t *raw);
 int drv8235_get_bridge_control(const struct device *dev, enum drv8235_bridge_mode *mode);
 
 /**
- * Voltage: VMTR * 0.16733 V. Current: IMTR * 3.7 / 192 A, following the team's
+ * Voltage: VMTR * 0.16733 V. Current: IMTR * imtr-full-scale-microamp / 192,
+ * converted to amps (default IMTR * 3.7 / 192 A), following the team's
  * EPS conversion exception to Python. Both are negated in reverse; the sign
  * is inferred from the command, not measured.
  * Brake does not force current to zero. Coast may return stale/unsensed current;

@@ -1,9 +1,2 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-
-&i2c0 {
-	drv8235_test: drv8235@30 {
-		compatible = "ti,drv8235";
-		reg = <0x30>;
-		status = "okay";
-	};
-};
+#include "../drv8235_nodes.dtsi"

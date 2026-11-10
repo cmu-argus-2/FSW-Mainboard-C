@@ -1,7 +1,10 @@
 # DRV8235 regression tests
 
 The real Zephyr driver runs against a small I2C register emulator. Tests use
-their own binding and simulated bus, with no Board Library or regulator needed.
+the same binding as the hardware, a simulated bus and a fake regulator.
+The shared CMake helper pins and fetches the Board Library on first configure.
+Network is required for that fetch; for offline runs add
+`-x ARGUS_BOARD_LIB=/absolute/path/to/FSW-Zephyr-Board-Lib` to Twister.
 
 From a configured west workspace:
 
@@ -19,12 +22,20 @@ west twister -T FSW-Mainboard-C/tests/drivers/drv8235 \
 
 The focused tests cover:
 
-- Boot/init settings, disabling before protected writes, and reinitialization.
+- No chip access at boot, supply-off rejection, retry after failed probe,
+  init settings and disabling before protected writes.
 - Python/Rust throttle cases: normalized, volts and signed raw commands,
-  clamping, quantization, getters, zero/brake and None/coast equivalents.
+  normalized clamping, quantization, getters, zero/brake and None/coast equivalents.
+- Coil voltage limits on all command paths, including the 6 V rounding boundary,
+  and rejection without altering the previous output.
+- Both reversal directions coast before writing the new magnitude; same-direction
+  updates do not insert coast. Register write order is checked.
+- Two devices with different voltage, coil resistance and current full scale
+  demonstrate that DT properties are used rather than hardcoded.
 - Python-compatible voltage/sign behavior and the team's EPS current conversion
   (raw * 3.7 / 192 A) in all four modes, including nonzero brake current.
-- Correct active-low NPOR, fault reporting/clearing, and reset recovery.
+- Correct active-low NPOR, fault reporting/clearing, reset recovery and setters
+  remaining usable with a latched FAULT (including zero/brake).
 - I2C error propagation, failed command cleanup and invalid arguments.
 
 The emulator models register defaults, protected fields and CLR_FLT/NPOR.

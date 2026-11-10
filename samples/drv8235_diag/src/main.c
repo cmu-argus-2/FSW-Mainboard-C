@@ -73,33 +73,51 @@ static int stop_axis(const struct shell *sh, int axis)
 	return ret;
 }
 
-static int print_status(const struct shell *sh, int axis)
-{
-	const struct device *dev = axes[axis].dev;
+struct status_snapshot {
 	struct drv8235_faults faults;
 	enum drv8235_bridge_mode mode;
 	float volts, amps;
-	int ret = drv8235_read_voltage_current(dev, &volts, &amps);
+};
+
+/* No console I/O here: pulse uses this while the coil is driven. */
+static int read_status(int axis, struct status_snapshot *snapshot)
+{
+	const struct device *dev = axes[axis].dev;
+	int ret = drv8235_read_voltage_current(dev, &snapshot->volts, &snapshot->amps);
 
 	if (ret == 0) {
-		ret = drv8235_get_bridge_control(dev, &mode);
+		ret = drv8235_get_bridge_control(dev, &snapshot->mode);
 	}
 	if (ret == 0) {
-		ret = drv8235_get_faults(dev, &faults);
+		ret = drv8235_get_faults(dev, &snapshot->faults);
 	}
-	if (ret != 0) {
-		shell_error(sh, "%s: status failed (%d)", axes[axis].name, ret);
-		return ret;
-	}
+	return ret;
+}
+
+static void print_snapshot(const struct shell *sh, int axis,
+			   const struct status_snapshot *snapshot)
+{
 	const char *const names[] = {"coast", "reverse", "forward", "brake"};
 
 	shell_print(sh, "%s: mode=%s voltage=%dmV current=%dmA fault=0x%02x",
-		    axes[axis].name, names[mode], (int)(volts * 1000), (int)(amps * 1000),
-		    faults.raw);
-	if (mode == DRV8235_BRIDGE_COAST) {
+		    axes[axis].name, names[snapshot->mode], (int)(snapshot->volts * 1000),
+		    (int)(snapshot->amps * 1000), snapshot->faults.raw);
+	if (snapshot->mode == DRV8235_BRIDGE_COAST) {
 		shell_print(sh, "coast current may be stale/unsensed; current calibration pending");
 	}
-	return 0;
+}
+
+static int print_status(const struct shell *sh, int axis)
+{
+	struct status_snapshot snapshot;
+	int ret = read_status(axis, &snapshot);
+
+	if (ret != 0) {
+		shell_error(sh, "%s: status failed (%d)", axes[axis].name, ret);
+	} else {
+		print_snapshot(sh, axis, &snapshot);
+	}
+	return ret;
 }
 
 static int cmd_list(const struct shell *sh, size_t argc, char **argv)
@@ -109,7 +127,8 @@ static int cmd_list(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "COIL_EN: %s", regulator_is_enabled(supply) ? "ON" : "OFF");
 	for (size_t i = 0; i < ARRAY_SIZE(axes); ++i) {
 		shell_print(sh, "%s: %s", axes[i].name,
-			    device_is_ready(axes[i].dev) ? "ready" : "NOT READY");
+			    device_is_ready(axes[i].dev) ? "driver ready (chip checked on arm)" :
+			    "NOT READY");
 	}
 	return 0;
 }
@@ -195,7 +214,10 @@ static int cmd_pulse(const struct shell *sh, size_t argc, char **argv)
 	}
 	int ret = drv8235_set_throttle_volts(axes[axis].dev, mv / 1000.0f);
 	int64_t deadline = k_uptime_get() + ms;
-	bool printed = false;
+	struct status_snapshot snapshot;
+	bool captured = false;
+	bool fault_seen = false;
+	uint8_t pulse_fault = 0;
 
 	while (ret == 0 && k_uptime_get() < deadline) {
 		k_msleep((int32_t)MIN(50LL, MAX(0LL, deadline - k_uptime_get())));
@@ -203,16 +225,31 @@ static int cmd_pulse(const struct shell *sh, size_t argc, char **argv)
 
 		ret = drv8235_get_faults(axes[axis].dev, &faults);
 		if (ret == 0 && ((faults.raw & 0xBC) || faults.power_on_reset)) {
-			shell_error(sh, "pulse fault=0x%02x", faults.raw);
+			pulse_fault = faults.raw;
+			fault_seen = true;
 			ret = -EIO;
 		}
-		if (ret == 0 && !printed) {
-			ret = print_status(sh, axis);
-			printed = true;
+		if (ret == 0 && !captured) {
+			/* Save the active reading, but never print until the coil is stopped. */
+			ret = drv8235_read_voltage_current(axes[axis].dev,
+							 &snapshot.volts, &snapshot.amps);
+			if (ret == 0) {
+				ret = drv8235_get_bridge_control(axes[axis].dev, &snapshot.mode);
+			}
+			snapshot.faults = faults;
+			captured = ret == 0;
 		}
 	}
 	int stop = stop_axis(sh, axis);
 
+	/* USB/shell writes can wait indefinitely if the host disconnects. */
+	if (captured) {
+		shell_print(sh, "Captured during pulse:");
+		print_snapshot(sh, axis, &snapshot);
+	}
+	if (fault_seen) {
+		shell_error(sh, "pulse aborted; last fault=0x%02x", pulse_fault);
+	}
 	if (ret == 0) {
 		ret = stop;
 	}
