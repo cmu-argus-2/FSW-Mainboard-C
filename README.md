@@ -73,6 +73,7 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 | `cmake/` | Build helpers (git version header printed at boot) |
 | `src/`, `include/argus/` | Application code |
 | `tests/`, `test_vectors/` | Tests |
+| `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
 
 ## Hardware revisions
 
@@ -109,3 +110,36 @@ so a v5 build can never silently use v4 pins.
 - `PERIPH_PWR_EN` (GPIO42) must be driven high before anything on I2C0/I2C1 responds.
 - `WDT_EN` (GPIO15) arms the external watchdog; once armed, `WDT_WDI` (GPIO2) must be toggled or the board resets. Nothing drives it by default.
 - Polarity of the `*_FLT` and `BATT_ALRT` inputs has not been checked against the schematic.
+
+## DRV8235 magnetorquer driver
+
+The driver follows the original Python and Embassy Rust interfaces: normalized
+throttle, volts and signed raw setters/getters, bridge mode, voltage/current
+readings and fault clearing. Zero commands brake; `drv8235_coast()` corresponds
+to Python's `None`. Getters return `-ENODATA` while coasting. Initialization
+finishes with EN_OUT enabled at target zero/coast; the application owns COIL_EN
+and calls `drv8235_init()` again after cycling power.
+
+Normalized throttle scales to the DT coil voltage limit (6 V on Argus).
+Volts/raw reject commands exceeding that limit; voltage rounding cannot exceed
+the largest safe code (35 at 6 V). Reversals coast before changing magnitude.
+Voltage and reverse-sign behavior follow Python; current uses
+the team's EPS exception, `raw * full_scale_A / 192` (default `raw * 3.7 / 192 A`). Brake does not fabricate zero
+current, and coast readings may be stale/unsensed. Current calibration remains
+unconfirmed. Active-low NPOR and
+negative raw writes are corrected; fault clearing first selects zero/coast.
+
+Boot initializes software only. After enabling the DT `vm-supply`, the application
+calls `drv8235_init()` and can retry if the chip was unavailable. A latched FAULT
+does not independently block setters; fault handling remains application policy.
+
+The [ztests](tests/drivers/drv8235/README.md) and hardware use the same binding
+from the Board Library commit pinned in `cmake/drv8235_board_lib.cmake`.
+Their first configure fetches it (network required), or accepts a local checkout
+via `-DARGUS_BOARD_LIB=/absolute/path` for offline builds.
+Coil resistance, voltage limit, current full scale and supply come from that binding.
+The main application retains its in-tree board, while the diagnostic explicitly
+selects the shared board. Board files, west manifest and CI are unchanged.
+
+The interactive board test, build/flash steps, expected output, and safe manual
+test sequence are in [`samples/drv8235_diag/README.md`](samples/drv8235_diag/README.md).
