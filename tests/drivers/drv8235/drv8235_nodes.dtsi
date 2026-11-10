@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	fake_regulators {
+		compatible = "zephyr,fake-regulator";
+		test_supply: supply {
+			regulator-name = "coil-test";
+		};
+	};
+};
+
+&i2c0 {
+	drv8235_test: drv8235@30 {
+		compatible = "ti,drv8235";
+		reg = <0x30>;
+		vm-supply = <&test_supply>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+		status = "okay";
+	};
+	/* Different values prove these fields are read per device, not hardcoded. */
+	drv8235_alt: drv8235@31 {
+		compatible = "ti,drv8235";
+		reg = <0x31>;
+		vm-supply = <&test_supply>;
+		max-output-microvolt = <3000000>;
+		coil-resistance-milliohm = <50000>;
+		imtr-full-scale-microamp = <1920000>;
+		status = "okay";
+	};
+};

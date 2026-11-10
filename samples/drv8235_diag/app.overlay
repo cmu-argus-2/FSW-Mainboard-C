@@ -1,0 +1,4 @@
+/* Keep application power policy here, not in the shared hardware definition. */
+&coil_power {
+	/delete-property/ regulator-boot-on;
+};
