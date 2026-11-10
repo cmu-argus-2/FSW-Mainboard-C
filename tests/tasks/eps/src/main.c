@@ -26,6 +26,8 @@ struct fake_hw {
 	unsigned int heater_writes;
 	unsigned int full_records;
 	unsigned int warning_records;
+	uint16_t last_full_valid_reads;
+	uint16_t last_warning_valid_reads;
 	int32_t last_full[EPS_FIELD_COUNT];
 	int32_t last_warning[EPS_WARNING_COUNT];
 };
@@ -74,16 +76,19 @@ static int heaters(void *ctx, bool first, bool second)
 	h->second = second;
 	return 0;
 }
-static void publish(void *ctx, bool full, const int32_t *values, size_t count)
+static void publish(void *ctx, bool full, const int32_t *values, size_t count,
+		    uint16_t valid_reads)
 {
 	struct fake_hw *h = ctx;
 
 	zassert_equal(count, full ? EPS_FIELD_COUNT : EPS_WARNING_COUNT);
 	if (full) {
 		++h->full_records;
+		h->last_full_valid_reads = valid_reads;
 		memcpy(h->last_full, values, sizeof(h->last_full));
 	} else {
 		++h->warning_records;
+		h->last_warning_valid_reads = valid_reads;
 		memcpy(h->last_warning, values, sizeof(h->last_warning));
 	}
 }
@@ -141,15 +146,17 @@ ZTEST(eps, test_complete_44_field_order_and_latest_fast_readings)
 	for (int i = 0; i < 6; ++i) {
 		hw.coils[i] = (struct eps_vi){1000 + i, 200 + i};
 	}
-	hw.fuel = (struct eps_fuel){2100, -10, 700, 2400, 55, 1500, -40, 8000, 4000, 3600, 1800};
+	hw.fuel = (struct eps_fuel){-100, -10, 700, 2400, 55, 1500, -40, 8000, 4000, 3600, 1800};
 	five_runs();
 	const int32_t expected[] = {
-		5, 2, 2500, 3000, 101, 2100, -10, 700, 2400, 55, 1500, -40,
+		5, 2, 2500, 3000, 101, -100, -10, 700, 2400, 55, 1500, -40,
 		8000, 4000, 3600, 1800,
 		1000, 200, 1001, 201, 1002, 202, 1003, 203, 1004, 204, 1005, 205,
 		12000, 104, 5000, 103, 3300, 102, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
 	};
 	zassert_mem_equal(hw.last_full, expected, sizeof(expected));
+	zassert_equal(hw.last_full_valid_reads, 0xfff);
+	zassert_equal(hw.last_warning_valid_reads, 0x3ff);
 }
 
 ZTEST(eps, test_alert_order_and_exact_thresholds)
@@ -169,7 +176,7 @@ ZTEST(eps, test_alert_order_and_exact_thresholds)
 	zassert_false(eps_power_alert((struct eps_vi){1000, -1000}, 1000));
 }
 
-ZTEST(eps, test_invalid_read_does_not_publish_partial_or_stale_values)
+ZTEST(eps, test_failed_reads_and_valid_zeros_have_distinct_validity)
 {
 	hw.monitors[EPS_MAIN] = (struct eps_vi){5000, 1000};
 	hw.coils[EPS_XP] = (struct eps_vi){6000, 2000};
@@ -181,8 +188,27 @@ ZTEST(eps, test_invalid_read_does_not_publish_partial_or_stale_values)
 	zassert_equal(state.fields[EPS_XP_MA], 0);
 	zassert_equal(state.warnings[1], 0);
 	zassert_equal(state.warnings[5], 0);
+	zassert_equal(hw.last_warning_valid_reads, 0x3ee);
 	zassert_equal(hw.monitor_reads, 8);
 	zassert_equal(hw.coil_reads, 12);
+
+	for (int i = 3; i <= 5; ++i) {
+		(void)eps_step(&state, &io, i);
+	}
+	zassert_equal(hw.last_full[EPS_MAIN_MV], 0);
+	zassert_equal(hw.last_full[EPS_XP_MA], 0);
+	zassert_equal(hw.last_full_valid_reads, 0xfee);
+
+	hw.bad_monitor = -1;
+	hw.bad_coil = -1;
+	hw.monitors[EPS_MAIN] = (struct eps_vi){0};
+	hw.coils[EPS_XP] = (struct eps_vi){0};
+	(void)eps_step(&state, &io, 6);
+	zassert_equal(state.fields[EPS_MAIN_MV], 0);
+	zassert_equal(state.fields[EPS_XP_MA], 0);
+	zassert_equal(hw.last_warning[1], 0);
+	zassert_equal(hw.last_warning[5], 0);
+	zassert_equal(hw.last_warning_valid_reads, 0x3ff);
 }
 
 ZTEST(eps, test_soc_hysteresis_and_invalid_inputs)
@@ -241,6 +267,7 @@ ZTEST(eps, test_missing_gauge_falls_back_to_cpu_minus_two_degrees)
 	zassert_equal(state.fields[EPS_CPU_TEMP_CC], 200);
 	zassert_equal(state.fields[EPS_AIN1_TEMP_CC], 0);
 	zassert_equal(state.power_flag, EPS_NONE);
+	zassert_equal(hw.last_full_valid_reads, 0x7ff);
 	hw.cpu = 699;
 	five_runs();
 	zassert_true(hw.first);
@@ -258,6 +285,7 @@ ZTEST(eps, test_missing_cpu_still_uses_valid_gauge)
 	zassert_true(hw.first);
 	zassert_false(hw.second);
 	zassert_equal(state.fields[EPS_CPU_TEMP_CC], 0);
+	zassert_equal(hw.last_full_valid_reads, 0xbff);
 }
 
 ZTEST(eps, test_missing_both_temperature_sources_do_not_heat_on_zero)
@@ -272,6 +300,14 @@ ZTEST(eps, test_missing_both_temperature_sources_do_not_heat_on_zero)
 	zassert_false(hw.second);
 	zassert_equal(state.fields[EPS_SOC_PCT], 0);
 	zassert_equal(state.power_flag, EPS_NOMINAL);
+	zassert_equal(hw.last_full_valid_reads, 0x3ff);
+
+	hw.bad_fuel = false;
+	hw.fuel.soc_pct = 0;
+	five_runs();
+	zassert_equal(hw.last_full[EPS_SOC_PCT], 0);
+	zassert_equal(hw.last_full_valid_reads, 0xbff);
+	zassert_equal(state.power_flag, EPS_LOW_POWER);
 }
 
 ZTEST(eps, test_failed_heater_write_does_not_claim_success)
@@ -281,44 +317,6 @@ ZTEST(eps, test_failed_heater_write_does_not_claim_success)
 	five_runs();
 	zassert_false(state.heater1);
 	zassert_equal(state.fields[EPS_HEATER1], 0);
-}
-
-ZTEST(eps, test_adm1176_conversions_match_spec_truncation)
-{
-	struct eps_vi v = eps_adm1176_convert(2048, 2048);
-
-	zassert_equal(v.mv, 13175);
-	zassert_equal(v.ma, 5292);
-	v = eps_adm1176_convert(1, 1);
-	zassert_equal(v.mv, 6);
-	zassert_equal(v.ma, 2);
-	v = eps_adm1176_convert(4095, 4095);
-	zassert_equal(v.mv, 26343);
-	zassert_equal(v.ma, 10581);
-}
-
-ZTEST(eps, test_drv8235_spec_voltage_and_192_current_exception)
-{
-	struct eps_vi v = eps_drv8235_convert(30, 96, false);
-
-	zassert_equal(v.mv, 5019); /* int(30 * 0.16733 * 1000), not 5000 */
-	zassert_equal(v.ma, 1850); /* 96 * 3700 / 192, not /255 */
-	v = eps_drv8235_convert(1, 1, true);
-	zassert_equal(v.mv, -167);
-	zassert_equal(v.ma, -19); /* toward zero, not floor(-19.27) */
-	v = eps_drv8235_convert(255, 192, false);
-	zassert_equal(v.mv, 42669);
-	zassert_equal(v.ma, 3700);
-}
-
-ZTEST(eps, test_document_temperature_encodings_and_offset)
-{
-	zassert_equal(eps_pack_temperature_cc(0x1900), 2500);
-	zassert_equal(eps_pack_temperature_cc(1), 0);
-	zassert_equal(eps_pack_temperature_cc(0xFF00), 25500); /* unsigned per spec */
-	zassert_equal(eps_shadow_temperature_cc(2731), 0);
-	zassert_equal(eps_shadow_temperature_cc(2730), -10);
-	zassert_equal(eps_shadow_temperature_cc(2982), 2510);
 }
 
 ZTEST(eps, test_csv_field_order_and_negative_numbers)

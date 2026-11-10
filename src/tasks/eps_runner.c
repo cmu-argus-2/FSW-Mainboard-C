@@ -43,13 +43,16 @@ static int heaters_unavailable(void *context, bool first, bool second)
 	return -ENODEV;
 }
 
-static void console_publish(void *context, bool full, const int32_t *fields, size_t count)
+static void console_publish(void *context, bool full, const int32_t *fields, size_t count,
+			    uint16_t valid_reads)
 {
 	char line[EPS_RECORD_BUFFER_SIZE];
 
 	ARG_UNUSED(context);
 	if (eps_format_record(line, sizeof(line), full, fields, count) >= 0) {
-		printk("%s\n", line);
+		printk("%s\n%s,%ld,0x%03x\n", line,
+		       full ? "EPS_VALIDITY" : "EPS_WARNING_VALIDITY",
+		       (long)fields[0], (unsigned int)valid_reads);
 	}
 }
 

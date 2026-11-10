@@ -6,9 +6,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum eps_power_flag { EPS_NONE, EPS_LOW_POWER, EPS_NOMINAL };
+#include "argus/apps/eps/eps.h"
+
 enum eps_monitor { EPS_MAIN, EPS_PERIPHERAL, EPS_RADIO, EPS_JETSON, EPS_MONITOR_COUNT };
 enum eps_axis { EPS_XP, EPS_XM, EPS_YP, EPS_YM, EPS_ZP, EPS_ZM, EPS_COIL_COUNT };
+
+/* Read-success bits shared by warning and full records. Slow groups appear
+ * only in the full record. A set bit means the callback supplied a sample.
+ */
+#define EPS_VALID_MONITOR(monitor) (1U << (monitor))
+#define EPS_VALID_COIL(axis) (1U << (EPS_MONITOR_COUNT + (axis)))
+#define EPS_VALID_CPU_TEMP (1U << (EPS_MONITOR_COUNT + EPS_COIL_COUNT))
+#define EPS_VALID_FUEL (EPS_VALID_CPU_TEMP << 1)
 
 /* Indices are the original Python core/dh_constants.py EPS_IDX wire order. */
 enum eps_field {
@@ -30,11 +39,6 @@ enum eps_field {
 #define EPS_SLOW_PERIOD 5U
 #define EPS_RECORD_BUFFER_SIZE 640U
 
-struct eps_vi {
-	int32_t mv;
-	int32_t ma;
-};
-
 struct eps_fuel {
 	int32_t pack_temp_cc;
 	int32_t ain1_temp_cc;
@@ -49,9 +53,9 @@ struct eps_fuel {
 	int32_t ttf_s;
 };
 
-/* All callbacks return 0 on success, negative errno on an unavailable/failed read.
- * Implementations own device readiness and units. Each step commits only a whole
- * successful reading. Missing measurements remain zero, never aborting the cycle.
+/* Read/write callbacks return 0 on success or a negative errno on failure.
+ * Read callbacks use driver-decoded measurements in the units of these structs.
+ * A failed read leaves zero placeholders with its valid_reads bit clear.
  */
 struct eps_io {
 	void *context;
@@ -60,7 +64,7 @@ struct eps_io {
 	int (*read_fuel)(void *, struct eps_fuel *);
 	int (*read_cpu_temp)(void *, int32_t *);
 	int (*set_heaters)(void *, bool, bool);
-	void (*publish)(void *, bool full, const int32_t *, size_t);
+	void (*publish)(void *, bool full, const int32_t *, size_t, uint16_t valid_reads);
 };
 
 struct eps_state {
@@ -75,17 +79,6 @@ struct eps_state {
 void eps_init(struct eps_state *state);
 /* One 1 Hz invocation. Slow work occurs on calls 5, 10, 15, ... . */
 bool eps_step(struct eps_state *state, const struct eps_io *io, int32_t time_s);
-enum eps_power_flag eps_next_power_flag(enum eps_power_flag previous, int32_t soc);
-bool eps_next_heater(bool enabled, int32_t temp_cc);
-bool eps_power_alert(struct eps_vi reading, int32_t threshold_mw);
-
-/* Compatibility conversions from the EPS Task Spec, using integer truncation.
- * DRV8235 current alone differs from Python: 3.7 A / 192, not / 255.
- */
-struct eps_vi eps_adm1176_convert(uint16_t raw_v, uint16_t raw_i);
-struct eps_vi eps_drv8235_convert(uint8_t raw_v, uint8_t raw_i, bool reverse);
-int32_t eps_pack_temperature_cc(uint16_t raw);
-int32_t eps_shadow_temperature_cc(uint16_t raw);
 
 /* CSV with a record label; label is not one of the 11/44 numeric fields. */
 int eps_format_record(char *buffer, size_t size, bool full, const int32_t *fields,

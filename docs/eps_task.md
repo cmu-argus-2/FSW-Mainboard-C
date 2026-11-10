@@ -1,83 +1,56 @@
-# EPS task only
+# EPS telemetry task
 
-Issue: [21](https://github.com/cmu-argus-2/FSW-Mainboard-C/issues/21).
-Branch: `21-to-doeps-tasks`.
+The EPS task runs at 1 Hz. Each run samples four supply monitors and six
+torque coils, then publishes an `EPS_WARNING` record with 11 values. Every
+fifth run it also reads the fuel gauge and CPU temperature, updates the
+battery power flag and heater decisions, and publishes an `EPS` record with
+44 values in the Python `EPS_IDX` order.
 
-This change implements the EPS task logic and its own tests. It does not
-implement, import, or modify hardware drivers, bindings, or driver tests.
+The rules for power alerts, SOC hysteresis and heater hysteresis live in
+`src/apps/eps`. The task and its runner live in `src/tasks`. The default
+runner demonstrates the console output with unavailable hardware callbacks.
+Hardware integration supplies driver-backed callbacks through `eps_io`.
 
-## Behavior
+## Read validity
 
-`src/tasks/eps.c` implements one step of the 1 Hz task:
-- Read four monitor and six coil values through the injected `eps_io` callbacks.
-- Calculate threshold alerts and publish eleven warning fields each run.
-- Every fifth run, read battery/CPU data, update SOC state, apply two heater
-  decisions, and publish 44 telemetry fields in the Python EPS_IDX order.
-- Preserve the specified units, truncation, thresholds, temperature fallback,
-  unsigned pack-temperature encoding and 2731 offset.
-- Retain the team's one conversion exception: coil current uses raw * 3700 / 192
-  mA. Coil voltage uses raw * 16733 / 100 mV; both are negated in REVERSE.
-- Keep solar slots zero and skip failed/unavailable measurements.
-- Keep TTE/TTF for logging only; I/O integration may retain minute resolution.
+Each console record is followed by a companion line with the same time and a
+hexadecimal read-validity mask. The labels are `EPS_WARNING_VALIDITY` and
+`EPS_VALIDITY` for the warning and full records, respectively. The numeric
+fields in the original records retain their count and order.
 
-`include/argus/tasks/eps.h` defines the data types, field order and I/O contract.
-The callbacks supply readings in the documented units and perform the requested
-heater operation. A negative errno reports a failure/unavailable device.
-Implementing or changing those hardware drivers is a separate task.
+| Bits | Read group |
+| --- | --- |
+| 0–3 | Main, peripheral, radio, Jetson |
+| 4–9 | XP, XM, YP, YM, ZP, ZM coils |
+| 10 | CPU temperature (full record) |
+| 11 | Fuel gauge (full record) |
 
-`src/tasks/eps_runner.c` calls `eps_step()` at absolute one-second deadlines.
-Real hardware integration supplies an `eps_io` provider to `eps_run()`.
-The default `src/main.c` explicitly uses a console-only provider: all hardware
-callbacks return `-ENODEV`. It prints zero/unavailable telemetry and never
-accesses peripherals or actuates heaters. This is not hardware integration and
-must not be represented as a successful sensor read.
+A set bit marks a successful read, including a measured zero. A clear bit
+marks the corresponding group as unavailable. For example, a mainboard current
+of zero is a valid reading if bit 0 is set and a placeholder if bit 0 is clear.
 
-## Scope
+## Driver values and temperature
 
-Only these paths differ from the updated main-branch base `fcbfa30`:
-- `include/argus/tasks/eps.h`
-- `src/tasks/eps.c`
-- `src/tasks/eps_runner.c`
-- `src/main.c` (start the EPS runner)
-- `CMakeLists.txt` (add the two task sources alongside main's existing sources)
-- `prj.conf` (main-thread stack size for console formatting)
-- `tests/tasks/eps/**`
-- `docs/eps_task.md`
+The callbacks use driver-decoded measurements and supply the EPS units,
+including mV, mA, seconds and centi-degrees Celsius. The DRV8235 driver PR
+[#22](https://github.com/cmu-argus-2/FSW-Mainboard-C/pull/22) applies the agreed
+current scale of 3.7 A / 192.
 
-`src/drivers/**`, `include/argus/drivers/**`, `dts/**`,
-`tests/drivers/**`, `boards/**`, `west.yml`, `zephyr/module.yml`,
-`.github/**` and `README.md` are unchanged from that base. No app overlay,
-board migration, shared-board pin, copied driver implementation or driver API
-extension is part of this change.
-
-## References
-
-- The supplied EPS Task Specs.docx and the team's decisions in this conversation.
-- Python reference `b428c544b22b5e6885b81c8a275afa4106e1a2d5`:
-  `flight/tasks/eps.py`, `flight/apps/eps/eps.py`,
-  `flight/core/dh_constants.py`, `flight/core/task_configuration.py`.
-- Zephyr `839728050444`: kernel scheduling, console and Ztest APIs.
-- The branch's existing CI workflow, left unchanged.
+The MAX17205 driver from [#16](https://github.com/cmu-argus-2/FSW-Mainboard-C/pull/16)
+decodes pack temperature as signed and reports it in 0.1 K increments. The
+original EPS spec interprets the pack register as unsigned. An adapter should
+use the driver-decoded pack temperature and convert its output to centi-degrees
+Celsius, retaining the driver's resolution. The AIN1, AIN2 and die properties
+already expose 0.1 K values. The EPS spec's offset for those channels is 2731,
+while the driver demo uses 2732.
 
 ## Tests
 
-`tests/tasks/eps` uses fake task-level callbacks only, with no I2C emulator,
-hardware driver, sensor API stand-in or Devicetree fixture. Tests cover scheduling,
-conversion/truncation, the 192 exception, all field orders, thresholds,
-SOC/temperature hysteresis, missing readings, CPU fallback, heater decisions
-and CSV format. The console-only provider is checked to return unavailable
-without fabricating measurements.
-
-The suite has `testcase.yaml` and allows `native_sim/native/64` for the existing
-Linux CI, plus `qemu_cortex_m3` for local macOS execution.
-
-Local validation: all 16 EPS tests passed on `qemu_cortex_m3`, and the
-`argus/rp2350b/m33_0` firmware built successfully and generated `zephyr.uf2`.
-The Linux CI run and real hardware integration remain separate validation.
+`tests/tasks/eps` exercises the periodic task with fake callbacks. It checks
+field order, thresholds, hysteresis, failure and recovery, and validity for
+successful zero readings and unavailable measurements.
 
 ```sh
 west build -p -b argus/rp2350b/m33_0 -d build/argus
 west twister -T tests/tasks/eps -p native_sim/native/64 --inline-logs
-# macOS:
-west twister -T tests/tasks/eps -p qemu_cortex_m3 --inline-logs
 ```
