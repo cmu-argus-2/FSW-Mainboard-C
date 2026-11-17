@@ -11,6 +11,7 @@ project(FSW-Mainboard-C)
 target_sources(app PRIVATE
         src/main.c
         src/drivers/adm1176.c
+        src/drivers/battery_heaters.c
         src/drivers/drv8235.c
         src/drivers/max17205.c
         src/drivers/opt4003.c

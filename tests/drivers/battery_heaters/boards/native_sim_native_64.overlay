@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	/* Two-heater board, as on Argus v4. */
+	heaters_dual: heaters-dual {
+		compatible = "cmu,battery-heaters";
+		heat-en-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* Single-heater board: heat1-on-gpios omitted. */
+	heaters_single: heaters-single {
+		compatible = "cmu,battery-heaters";
+		heat-en-gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+	};
+};
