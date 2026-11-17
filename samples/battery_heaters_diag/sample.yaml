@@ -1,0 +1,13 @@
+sample:
+  name: Argus battery heater diagnostic
+  description: Turn both battery heaters on for a few seconds, print their line states, then turn them off
+tests:
+  sample.argus.battery_heaters_diag:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - gpio
