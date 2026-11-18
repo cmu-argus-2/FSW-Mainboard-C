@@ -93,6 +93,8 @@ void eps_run(const struct eps_io *io);
  * Does not fabricate measurements or actuate heaters. Replace this I/O provider
  * with real driver callbacks when the separate hardware integration is ready.
  */
+void eps_console_publish(void *context, bool full, const int32_t *fields, size_t count,
+			 uint16_t valid_reads);
 const struct eps_io *eps_console_only_io(void);
 
 #endif

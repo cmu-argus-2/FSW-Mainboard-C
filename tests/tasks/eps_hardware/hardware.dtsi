@@ -1,0 +1,25 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	eps_test_gpio: gpio-test {
+		compatible = "zephyr,gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <8>;
+	};
+
+	zephyr,user {
+		heat-en-gpios = <&eps_test_gpio 0 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&eps_test_gpio 1 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&eps_test_gpio 2 GPIO_ACTIVE_HIGH>;
+		lora-en-gpios = <&eps_test_gpio 3 GPIO_ACTIVE_HIGH>;
+		gps-en-gpios = <&eps_test_gpio 5 GPIO_ACTIVE_HIGH>;
+	};
+
+	coil_power: coil-supply {
+		compatible = "regulator-fixed";
+		regulator-name = "coil-test";
+		enable-gpios = <&eps_test_gpio 4 GPIO_ACTIVE_HIGH>;
+	};
+};

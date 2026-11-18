@@ -16,6 +16,7 @@ target_sources(app PRIVATE
         src/drivers/opt4003.c
         src/apps/eps/eps.c
         src/tasks/eps.c
+        src/tasks/eps_hardware.c
         src/tasks/eps_runner.c
 )
 

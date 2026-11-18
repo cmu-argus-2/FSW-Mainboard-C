@@ -1,0 +1,14 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include "../hardware.dtsi"
+
+/ {
+	fake_i2c: i2c@100 {
+		compatible = "zephyr,i2c-emul-controller";
+		reg = <0x100 4>;
+		clock-frequency = <I2C_BITRATE_STANDARD>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+#include "../nodes.dtsi"
+	};
+};

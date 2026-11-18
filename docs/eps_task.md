@@ -7,9 +7,19 @@ battery power flag and heater decisions, and publishes an `EPS` record with
 44 values in the Python `EPS_IDX` order.
 
 The rules for power alerts, SOC hysteresis and heater hysteresis live in
-`src/apps/eps`. The task and its runner live in `src/tasks`. The default
-runner demonstrates the console output with unavailable hardware callbacks.
-Hardware integration supplies driver-backed callbacks through `eps_io`.
+`src/apps/eps`. The default firmware supplies driver-backed callbacks through
+`eps_io` and publishes both records to the console. Their timestamps are
+uptime seconds.
+
+At startup EPS enables the GPS supply using `gps-en-gpios`. The radio
+ADM1176 initializes after EPS enables its switched rail. The
+Jetson rail is controlled separately, so Jetson readings depend on its
+power state. EPS configures both heater outputs and their common enable
+inactive at startup.
+
+Coil telemetry needs the `coil_power` regulator and the six `torque_*`
+nodes and their binding in the board configuration. The current local
+Argus board lacks those nodes, so bits 4–9 stay clear on that build.
 
 ## Read validity
 
@@ -29,6 +39,11 @@ A set bit marks a successful read, including a measured zero. A clear bit
 marks the corresponding group as unavailable. For example, a mainboard current
 of zero is a valid reading if bit 0 is set and a placeholder if bit 0 is clear.
 
+The `eps_hardware` log names the device and reports its error code on
+I/O failure. It logs a new failure after a successful operation or when
+the error code changes, while the validity mask records every failed
+sample. A board without a ready coil supply also gets a startup message.
+
 ## Driver values and temperature
 
 The callbacks use driver-decoded measurements and supply the EPS units,
@@ -36,21 +51,38 @@ including mV, mA, seconds and centi-degrees Celsius. The DRV8235 driver PR
 [#22](https://github.com/cmu-argus-2/FSW-Mainboard-C/pull/22) applies the agreed
 current scale of 3.7 A / 192.
 
-The MAX17205 driver from [#16](https://github.com/cmu-argus-2/FSW-Mainboard-C/pull/16)
-decodes pack temperature as signed and reports it in 0.1 K increments. The
-original EPS spec interprets the pack register as unsigned. An adapter should
-use the driver-decoded pack temperature and convert its output to centi-degrees
-Celsius, retaining the driver's resolution. The AIN1, AIN2 and die properties
-already expose 0.1 K values. The EPS spec's offset for those channels is 2731,
-while the driver demo uses 2732.
+The MAX17205 driver decodes pack temperature as signed Celsius and adds
+2732 to its deci-degree value for the Zephyr API. EPS reverses that encoding.
+AIN1, AIN2 and die expose absolute temperatures in 0.1 K, converted to
+centi-degrees Celsius as `reading * 10 - 27315`. TTE and TTF are converted
+from the driver's whole minutes to seconds.
 
 ## Tests
 
 `tests/tasks/eps` exercises the periodic task with fake callbacks. It checks
 field order, thresholds, hysteresis, failure and recovery, and validity for
 successful zero readings and unavailable measurements.
+`tests/tasks/eps_hardware` runs the production EPS callbacks with the existing
+I²C driver emulators and emulated GPIO and coil regulator. This exercises
+driver values through to EPS records, validity after read failures, and
+both heater outputs and their common enable.
 
 ```sh
 west build -p -b argus/rp2350b/m33_0 -d build/argus
 west twister -T tests/tasks/eps -p native_sim/native/64 --inline-logs
+west twister -T tests/tasks/eps_hardware -p native_sim/native/64 --inline-logs
 ```
+
+## On-board checks
+
+With the v4 mainboard and battery board connected, check warning bits 0–1
+and full-record bits 10–11 for main/GPS rail, CPU temperature and fuel-gauge
+telemetry. Check bit 2 with the radio rail powered and bit 3 with the Jetson
+rail powered. Compare voltage, current and temperatures against the
+corresponding device diagnostics.
+
+With a board configuration that provides all six coils and with all reads
+successful, the warning mask is `0x3ff` and the full mask is `0xfff`.
+Verify that one unavailable device clears only its own bit and that a valid
+zero still sets its bit. On the battery board, verify both heater channels
+start off and the shared enable stays active while either channel is on.

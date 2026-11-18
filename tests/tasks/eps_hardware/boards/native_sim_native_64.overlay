@@ -1,0 +1,5 @@
+#include "../hardware.dtsi"
+
+&i2c0 {
+#include "../nodes.dtsi"
+};

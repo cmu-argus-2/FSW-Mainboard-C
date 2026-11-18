@@ -43,8 +43,8 @@ static int heaters_unavailable(void *context, bool first, bool second)
 	return -ENODEV;
 }
 
-static void console_publish(void *context, bool full, const int32_t *fields, size_t count,
-			    uint16_t valid_reads)
+void eps_console_publish(void *context, bool full, const int32_t *fields, size_t count,
+			 uint16_t valid_reads)
 {
 	char line[EPS_RECORD_BUFFER_SIZE];
 
@@ -64,7 +64,7 @@ const struct eps_io *eps_console_only_io(void)
 		.read_fuel = fuel_unavailable,
 		.read_cpu_temp = cpu_unavailable,
 		.set_heaters = heaters_unavailable,
-		.publish = console_publish,
+		.publish = eps_console_publish,
 	};
 
 	return &io;
