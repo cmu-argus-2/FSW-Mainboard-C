@@ -84,10 +84,10 @@ bool eps_step(struct eps_state *state, const struct eps_io *io, int32_t time_s);
 int eps_format_record(char *buffer, size_t size, bool full, const int32_t *fields,
 		      size_t count);
 
-/* Run the task at 1 Hz using hardware callbacks supplied by integration code.
- * Driver implementations and hardware initialization are outside this module.
+/* Start the dedicated EPS thread once, after hardware initialization.
+ * The thread owns a copy of io. Its context must outlive the thread.
  */
-void eps_run(const struct eps_io *io);
+void eps_start(struct eps_io io);
 
 /* Explicit console-only bring-up: all hardware operations return -ENODEV.
  * Does not fabricate measurements or actuate heaters. Replace this I/O provider

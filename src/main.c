@@ -7,8 +7,6 @@ int main(void)
 {
 	printk("Argus FSW mainboard rev %s (%s)\n", CONFIG_BOARD_REVISION, ARGUS_GIT_VERSION);
 	printk("EPS 1 Hz; time is uptime seconds; full record every fifth run\n");
-	struct eps_io io = eps_hardware_io();
-
-	eps_run(&io);
+	eps_start(eps_hardware_io());
 	return 0;
 }

@@ -222,4 +222,64 @@ ZTEST(eps_hardware, test_coil_read_error_marks_only_affected_axis_invalid)
 	drv8235_emul_set_error(coil_emuls[EPS_XP], 0);
 }
 
+/* Ten 1 Hz invocations produce ten warning records and two full records. */
+static struct {
+	int64_t uptime_ms;
+	bool full;
+} thread_records[12];
+static size_t record_count;
+static k_tid_t publisher;
+static K_SEM_DEFINE(records_ready, 0, 1);
+
+static void observe_publish(void *context, bool full, const int32_t *fields, size_t count,
+			    uint16_t valid)
+{
+	if (record_count < ARRAY_SIZE(thread_records)) {
+		publisher = k_current_get();
+		thread_records[record_count].uptime_ms = k_uptime_get();
+		thread_records[record_count].full = full;
+		eps_console_publish(context, full, fields, count, valid);
+		if (++record_count == ARRAY_SIZE(thread_records)) {
+			k_sem_give(&records_ready);
+		}
+	}
+}
+
+ZTEST(eps_hardware, test_thread_priority_and_periodic_records)
+{
+	struct eps_io observed_io = io;
+
+	observed_io.publish = observe_publish;
+	eps_start(observed_io);
+	int ret = k_sem_take(&records_ready, K_SECONDS(12));
+
+	zassert_not_null(publisher);
+	zassert_not_equal(publisher, k_current_get());
+	int priority = k_thread_priority_get(publisher);
+
+	if (IS_ENABLED(CONFIG_ARM)) {
+		size_t unused;
+
+		zassert_ok(k_thread_stack_space_get(publisher, &unused));
+		printk("EPS test thread stack high-water mark: %zu / %zu bytes\n",
+		       publisher->stack_info.size - unused, publisher->stack_info.size);
+	}
+	k_thread_abort(publisher);
+	zassert_ok(ret);
+	zassert_equal(priority, K_PRIO_PREEMPT(2));
+	size_t index = 0;
+
+	for (int run = 1; run <= 10; ++run) {
+		zassert_false(thread_records[index].full);
+		int64_t elapsed = thread_records[index].uptime_ms - thread_records[0].uptime_ms;
+
+		zassert_within(elapsed, (run - 1) * 1000, 100);
+		++index;
+		if (run % 5 == 0) {
+			zassert_true(thread_records[index].full);
+			++index;
+		}
+	}
+}
+
 ZTEST_SUITE(eps_hardware, NULL, setup, before, NULL, NULL);

@@ -1,6 +1,9 @@
 # EPS telemetry task
 
-The EPS task runs at 1 Hz. Each run samples four supply monitors and six
+After hardware initialization, `main` starts a dedicated Zephyr thread for EPS
+and returns. EPS uses preemptive priority 2 (matching the Argus 2 EPS priority
+number) and reserves its own 4 KiB stack. It runs at 1 Hz against absolute
+deadlines and skips missed ticks. Each run samples four supply monitors and six
 torque coils, then publishes an `EPS_WARNING` record with 11 values. Every
 fifth run it also reads the fuel gauge and CPU temperature, updates the
 battery power flag and heater decisions, and publishes an `EPS` record with
@@ -67,7 +70,9 @@ successful zero readings and unavailable measurements.
 `tests/tasks/eps_hardware` runs the production EPS callbacks with the existing
 I²C driver emulators and emulated GPIO and coil regulator. This exercises
 driver values through to EPS records, validity after read failures, and
-both heater outputs and their common enable.
+both heater outputs and their common enable. A ten-run thread test checks
+the publisher's thread and priority, 1 Hz timing, and full records on runs
+5 and 10. On ARM QEMU it also reports the observed EPS stack high-water mark.
 
 ```sh
 west build -p -b argus/rp2350b/m33_0 -d build/argus
