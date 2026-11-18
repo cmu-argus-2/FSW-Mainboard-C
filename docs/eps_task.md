@@ -17,9 +17,11 @@ Jetson rail is controlled separately, so Jetson readings depend on its
 power state. EPS configures both heater outputs and their common enable
 inactive at startup.
 
-Coil telemetry needs the `coil_power` regulator and the six `torque_*`
-nodes and their binding in the board configuration. The current local
-Argus board lacks those nodes, so bits 4–9 stay clear on that build.
+The local v4 board definition provides the `coil_power` regulator on GPIO 1
+and six DRV8235 nodes. EPS enables the rail and initializes the bridges at
+zero target in coast before reading them. The negative axes (XM, YM, ZM) are
+on I²C0 and the positive axes (XP, YP, ZP) are on I²C1. Each bus uses
+addresses `0x30`, `0x31` and `0x33` for X, Y and Z respectively.
 
 ## Read validity
 
@@ -81,8 +83,8 @@ telemetry. Check bit 2 with the radio rail powered and bit 3 with the Jetson
 rail powered. Compare voltage, current and temperatures against the
 corresponding device diagnostics.
 
-With a board configuration that provides all six coils and with all reads
-successful, the warning mask is `0x3ff` and the full mask is `0xfff`.
+With all six coil devices connected and all reads successful, the warning
+mask is `0x3ff` and the full mask is `0xfff`.
 Verify that one unavailable device clears only its own bit and that a valid
 zero still sets its bit. On the battery board, verify both heater channels
 start off and the shared enable stays active while either channel is on.
