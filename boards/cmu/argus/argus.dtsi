@@ -53,6 +53,16 @@
 		regulator-boot-on;
 	};
 
+	/* EPS enables COIL_EN before initializing the six torque drivers.
+	 * The regulator waits for the rail to settle before returning.
+	 */
+	coil_power: coil-power {
+		compatible = "regulator-fixed";
+		regulator-name = "coil_power";
+		enable-gpios = <&gpio0_map 1 GPIO_ACTIVE_HIGH>;
+		off-on-delay-us = <100000>;
+	};
+
 	zephyr,user {
 		periph-pwr-flt-gpios = <&gpio0_map 41 GPIO_ACTIVE_HIGH>;
 
@@ -178,6 +188,30 @@ gpio0_lo: &gpio0 {
 	pinctrl-names = "default";
 	status = "okay";
 
+	torque_xm: drv8235@30 {
+		compatible = "ti,drv8235";
+		reg = <0x30>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_ym: drv8235@31 {
+		compatible = "ti,drv8235";
+		reg = <0x31>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_zm: drv8235@33 {
+		compatible = "ti,drv8235";
+		reg = <0x33>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
 	light_xm: opt4003@44 {
 		compatible = "ti,opt4003";
 		reg = <0x44>;
@@ -202,6 +236,30 @@ gpio0_lo: &gpio0 {
 	pinctrl-0 = <&i2c1_default>;
 	pinctrl-names = "default";
 	status = "okay";
+
+	torque_xp: drv8235@30 {
+		compatible = "ti,drv8235";
+		reg = <0x30>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_yp: drv8235@31 {
+		compatible = "ti,drv8235";
+		reg = <0x31>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_zp: drv8235@33 {
+		compatible = "ti,drv8235";
+		reg = <0x33>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
 
 	main_power_monitor: adm1176@40 {
 		compatible = "adi,adm1176";

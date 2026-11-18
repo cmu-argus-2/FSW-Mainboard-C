@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* EPS uses the RP2350 die-temperature channel for the heater fallback. */
+&adc {
+	status = "okay";
+};
+
+/* U13 is supplied by the LoRa rail. Initialize it after EPS enables the rail. */
+&radio_power_monitor {
+	zephyr,deferred-init;
+};
