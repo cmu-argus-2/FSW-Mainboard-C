@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#ifndef ARGUS_TASKS_EPS_H_
-#define ARGUS_TASKS_EPS_H_
+#ifndef ARGUS_TASKS_EPS_TASK_H_
+#define ARGUS_TASKS_EPS_TASK_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -83,6 +83,9 @@ bool eps_step(struct eps_state *state, const struct eps_io *io, int32_t time_s);
 /* CSV with a record label; label is not one of the 11/44 numeric fields. */
 int eps_format_record(char *buffer, size_t size, bool full, const int32_t *fields,
 		      size_t count);
+
+/* Initialize the EPS hardware once, before starting the periodic task. */
+struct eps_io eps_hardware_io(void);
 
 /* Start the dedicated EPS thread once, after hardware initialization.
  * The thread owns a copy of io. Its context must outlive the thread.

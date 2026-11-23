@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "argus/tasks/eps_hardware.h"
+#include "argus/tasks/eps_task.h"
 #include "adm1176_emul.h"
 #include "drv8235_emul.h"
 #include "max17205_emul.h"

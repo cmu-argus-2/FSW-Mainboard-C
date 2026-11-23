@@ -1,6 +1,6 @@
 #include <zephyr/sys/printk.h>
 
-#include "argus/tasks/eps_hardware.h"
+#include "argus/tasks/eps_task.h"
 #include "argus_version.h"
 
 int main(void)

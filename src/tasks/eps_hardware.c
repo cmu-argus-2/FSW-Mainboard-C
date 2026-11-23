@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "argus/tasks/eps_hardware.h"
+#include "argus/tasks/eps_task.h"
 
 #include <errno.h>
 #include <zephyr/device.h>

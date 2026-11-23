@@ -18,7 +18,6 @@ target_sources(app PRIVATE
         src/apps/eps/eps.c
         src/tasks/eps.c
         src/tasks/eps_hardware.c
-        src/tasks/eps_runner.c
 )
 
 target_include_directories(app PRIVATE
