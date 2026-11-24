@@ -36,6 +36,7 @@ struct bmx160_emul_data {
 	uint8_t chip_id;
 	uint8_t forced_err;
 	uint8_t ignored_reg;
+	uint8_t fail_read_reg;
 	bool fail;
 	uint8_t cmds[MAX_CMDS];
 	size_t num_cmds;
@@ -108,6 +109,16 @@ static int bmx160_emul_transfer(const struct emul *target, struct i2c_msg *msgs,
 
 	if (data->fail) {
 		return -EIO;
+	}
+
+	/* A register read is a 1-byte write of the register, then a read message */
+	if (data->fail_read_reg != BMX160_EMUL_NO_REG && num_msgs > 1 && msgs[0].len > 0 &&
+	    msgs[0].buf[0] == data->fail_read_reg) {
+		for (int i = 1; i < num_msgs; i++) {
+			if ((msgs[i].flags & I2C_MSG_RW_MASK) == I2C_MSG_READ) {
+				return -EIO;
+			}
+		}
 	}
 
 	/* i2c_burst_read_dt() sends the register, then reads, as two messages of one transfer */
@@ -205,6 +216,13 @@ void bmx160_emul_set_fail(const struct emul *target, bool fail)
 	data->fail = fail;
 }
 
+void bmx160_emul_fail_reads_of(const struct emul *target, uint8_t reg)
+{
+	struct bmx160_emul_data *data = target->data;
+
+	data->fail_read_reg = reg;
+}
+
 size_t bmx160_emul_get_cmds(const struct emul *target, const uint8_t **cmds)
 {
 	struct bmx160_emul_data *data = target->data;
@@ -233,6 +251,7 @@ static int bmx160_emul_init(const struct emul *target, const struct device *pare
 	memset(data, 0, sizeof(*data));
 	data->chip_id = BMX160_EMUL_CHIP_ID;
 	data->ignored_reg = BMX160_EMUL_NO_REG;
+	data->fail_read_reg = BMX160_EMUL_NO_REG;
 	bmx160_emul_reset(data);
 
 	data->bmm150[0x5D] = (uint8_t)BMX160_EMUL_TRIM_X1;

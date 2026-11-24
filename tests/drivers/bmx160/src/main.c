@@ -56,6 +56,7 @@ static void bmx160_before(void *fixture)
 	bmx160_emul_set_fail(imu_emul, false);
 	bmx160_emul_force_err(imu_emul, 0);
 	bmx160_emul_ignore_writes(imu_emul, BMX160_EMUL_NO_REG);
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_NO_REG);
 	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_500DPS));
 }
 
@@ -109,20 +110,45 @@ ZTEST(bmx160, test_gyro_500dps)
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_Y), DEG_TO_RAD(-250.0f), 1e-4f);
 }
 
-/* The two ranges the ADCS task uses: 2000 deg/s detumbling, 125 deg/s nominal */
+/*
+ * The two ranges the ADCS task uses: 2000 deg/s detumbling, 125 deg/s nominal. Samples
+ * fetched after each change are scaled with it.
+ */
 ZTEST(bmx160, test_gyro_range_change)
 {
 	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
-	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
 
 	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS));
 	zassert_equal(bmx160_emul_get_reg(imu_emul, BMX160_EMUL_REG_GYR_RANGE), 0x00);
 	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_2000DPS);
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(1000.0f), 1e-4f);
 
 	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS));
 	zassert_equal(bmx160_emul_get_reg(imu_emul, BMX160_EMUL_REG_GYR_RANGE), 0x04);
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(62.5f), 1e-4f);
+}
+
+/*
+ * A sample keeps the range it was measured in. Changing the range without fetching again
+ * must not rescale it (125 -> 2000 would read 16x too high).
+ */
+ZTEST(bmx160, test_gyro_sample_keeps_its_range)
+{
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
+	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS));
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(62.5f), 1e-4f);
+
+	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS));
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(62.5f), 1e-4f);
+
+	/* The same check through a full fetch */
+	zassert_ok(sensor_sample_fetch(imu));
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(1000.0f), 1e-4f);
+	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS));
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(1000.0f), 1e-4f);
 }
 
 /*
@@ -163,6 +189,60 @@ ZTEST(bmx160, test_gyro_range_failed_change_does_not_wait)
 	bmx160_emul_ignore_writes(imu_emul, BMX160_EMUL_NO_REG);
 	bmx160_emul_set_fail(imu_emul, true);
 	zassert_true(time_set_range(BMX160_GYRO_RANGE_2000DPS, -EIO) < RANGE_SETTLE_MS);
+}
+
+/*
+ * The write lands but its read-back fails: the chip now holds 2000 deg/s while the driver
+ * can't know it. The next gyro fetch must read the range first (and wait, since it
+ * changed) rather than scale a 2000 deg/s sample as 500.
+ */
+ZTEST(bmx160, test_gyro_range_readback_fails)
+{
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ)); /* at 500: 250 deg/s */
+
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_REG_GYR_RANGE);
+	zassert_equal(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS), -EIO);
+	zassert_equal(bmx160_emul_get_reg(imu_emul, BMX160_EMUL_REG_GYR_RANGE), 0x00);
+	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_500DPS); /* unconfirmed */
+
+	/* Still can't read the range: no new gyro sample, and the old one is kept */
+	zassert_equal(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ), -EIO);
+	zassert_equal(sensor_sample_fetch(imu), -EIO);
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(250.0f), 1e-4f);
+
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_NO_REG);
+	int64_t start = k_uptime_get();
+
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
+	int64_t ms = k_uptime_get() - start;
+
+	zassert_true(ms >= RANGE_SETTLE_MS, "confirming a new range took only %lld ms",
+		     (long long)ms);
+	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_2000DPS);
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(1000.0f), 1e-4f);
+
+	/* Confirmed now, so the next fetch doesn't read the range or wait again */
+	start = k_uptime_get();
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
+	ms = k_uptime_get() - start;
+	zassert_true(ms < RANGE_SETTLE_MS, "confirmed range still waited %lld ms", (long long)ms);
+}
+
+/* The write itself fails: if the chip kept its range, the check finds no change, no wait */
+ZTEST(bmx160, test_gyro_range_write_fails_range_unchanged)
+{
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
+	bmx160_emul_set_fail(imu_emul, true);
+	zassert_equal(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS), -EIO);
+	bmx160_emul_set_fail(imu_emul, false);
+
+	int64_t start = k_uptime_get();
+
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
+	zassert_true(k_uptime_get() - start < RANGE_SETTLE_MS);
+	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_500DPS);
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(250.0f), 1e-4f);
 }
 
 ZTEST(bmx160, test_gyro_range_invalid)
@@ -248,6 +328,26 @@ ZTEST(bmx160, test_temperature)
 	zassert_within(get1(imu, SENSOR_CHAN_DIE_TEMP), 22.0f, 1e-4f);
 }
 
+/* 0x8000 means no valid reading: -ENODATA, not -41 degC as Python reports it */
+ZTEST(bmx160, test_temperature_invalid)
+{
+	struct sensor_value val;
+
+	bmx160_emul_set_reg16(imu_emul, BMX160_EMUL_REG_TEMP, INT16_MIN);
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_DIE_TEMP));
+	zassert_equal(sensor_channel_get(imu, SENSOR_CHAN_DIE_TEMP, &val), -ENODATA);
+
+	/* A full fetch still succeeds; only the temperature is missing */
+	zassert_ok(sensor_sample_fetch(imu));
+	zassert_equal(sensor_channel_get(imu, SENSOR_CHAN_DIE_TEMP, &val), -ENODATA);
+	zassert_ok(sensor_channel_get(imu, SENSOR_CHAN_GYRO_X, &val));
+
+	/* The next valid reading is reported again */
+	bmx160_emul_set_reg16(imu_emul, BMX160_EMUL_REG_TEMP, 1024);
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_DIE_TEMP));
+	zassert_within(get1(imu, SENSOR_CHAN_DIE_TEMP), 25.0f, 1e-4f);
+}
+
 /* Fetching everything updates every sensor; fetching one sensor leaves the others alone */
 ZTEST(bmx160, test_fetch_all_and_one)
 {
@@ -281,6 +381,35 @@ ZTEST(bmx160, test_fetch_i2c_error)
 	zassert_equal(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ), -EIO);
 	zassert_equal(sensor_sample_fetch(imu), -EIO);
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(250.0f), 1e-4f);
+}
+
+/*
+ * A full fetch reads motion data, then temperature. If the temperature read fails, none
+ * of the new motion data is kept either, so the channels stay one consistent set.
+ */
+ZTEST(bmx160, test_fetch_all_temperature_fails)
+{
+	float m[3];
+
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
+	set_xyz(BMX160_EMUL_REG_DATA_ACC, 4096, 0, 0);
+	set_xyz(BMX160_EMUL_REG_DATA_MAG, (1000 << 3) | 1, (-500 * 8) | 2, (2000 << 1) | 1);
+	bmx160_emul_set_reg16(imu_emul, BMX160_EMUL_REG_DATA_MAG + 6, (6500 << 2) | 1);
+	bmx160_emul_set_reg16(imu_emul, BMX160_EMUL_REG_TEMP, 1024);
+	zassert_ok(sensor_sample_fetch(imu));
+
+	/* New motion data on the chip, but the temperature read will fail */
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, -16384, 0, 0);
+	set_xyz(BMX160_EMUL_REG_DATA_ACC, -4096, 0, 0);
+	set_xyz(BMX160_EMUL_REG_DATA_MAG, 0, 0, 0);
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_REG_TEMP);
+	zassert_equal(sensor_sample_fetch(imu), -EIO);
+
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(250.0f), 1e-4f);
+	zassert_within(get1(imu, SENSOR_CHAN_ACCEL_X), 9.80665f, 1e-4f);
+	get3(imu, SENSOR_CHAN_MAGN_XYZ, m);
+	zassert_within(m[0], 3.0422502f, 1e-4f);
+	zassert_within(get1(imu, SENSOR_CHAN_DIE_TEMP), 25.0f, 1e-4f);
 }
 
 /* Python: device_errors (fatal_err, drop_cmd_err) */

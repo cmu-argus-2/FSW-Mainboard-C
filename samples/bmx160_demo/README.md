@@ -124,6 +124,14 @@ sequence, register values, scaling and BMM150 compensation. The differences:
   scaled by the new one: on hardware, 4-5 deg/s instead of 0.3 deg/s after 125 -> 2000,
   and 0.02 instead of 0.3 after 2000 -> 125. Python doesn't wait, so its log still shows
   that spike on the line after each `=== gyro range` switch; `compare_logs.py` skips it.
+- Each gyro sample keeps the range it was measured in, so a range change doesn't rescale
+  a sample already fetched.
+- If a range write or its read-back fails, the chip may have the new range anyway. The
+  next gyro fetch reads the range from the chip before returning data.
+- A fetch that fails partway (e.g. the temperature read in a full fetch) keeps the whole
+  previous sample, so the channels always come from one fetch.
+- A temperature register of 0x8000 means no reading: the driver returns `-ENODATA` and
+  the demo prints `n/a`. Python reports it as -41 degC.
 
 The register values match what Python writes, which isn't always what its code intends.
 Its ODR setters write bare ODR codes, which also clear the filter bits: accel runs at

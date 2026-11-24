@@ -75,7 +75,9 @@ static void print_sample(void)
 	get3(SENSOR_CHAN_GYRO_XYZ, g);
 	get3(SENSOR_CHAN_ACCEL_XYZ, a);
 	get3(SENSOR_CHAN_MAGN_XYZ, m);
-	(void)sensor_channel_get(imu, SENSOR_CHAN_DIE_TEMP, &temp_val);
+	/* -ENODATA: the chip has no valid temperature yet (register 0x8000) */
+	bool temp_ok = sensor_channel_get(imu, SENSOR_CHAN_DIE_TEMP, &temp_val) == 0;
+
 	for (int i = 0; i < 3; i++) {
 		m[i] *= 100.0; /* gauss -> uT */
 	}
@@ -86,11 +88,15 @@ static void print_sample(void)
 	printk("accel %8.3f %8.3f %8.3f m/s^2  |a| %6.3f\n", a[0], a[1], a[2], norm(a));
 	printk("mag   %8.2f %8.2f %8.2f uT     |B| %6.2f\n", m[0], m[1], m[2], norm(m));
 
-	if (bmx160_read_errors(imu, &err) < 0) {
-		printk("temp  %6.2f degC  ERR_REG read failed\n", sensor_value_to_double(&temp_val));
+	if (temp_ok) {
+		printk("temp  %6.2f degC  ", sensor_value_to_double(&temp_val));
 	} else {
-		printk("temp  %6.2f degC  ERR_REG 0x%02x%s%s\n", sensor_value_to_double(&temp_val),
-		       err, (err & BMX160_ERR_FATAL) ? " FATAL" : "",
+		printk("temp     n/a       ");
+	}
+	if (bmx160_read_errors(imu, &err) < 0) {
+		printk("ERR_REG read failed\n");
+	} else {
+		printk("ERR_REG 0x%02x%s%s\n", err, (err & BMX160_ERR_FATAL) ? " FATAL" : "",
 		       (err & BMX160_ERR_DROP_CMD) ? " DROP_CMD" : "");
 	}
 }

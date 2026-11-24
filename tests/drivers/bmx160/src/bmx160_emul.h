@@ -59,6 +59,11 @@ void bmx160_emul_force_err(const struct emul *target, uint8_t err);
 void bmx160_emul_ignore_writes(const struct emul *target, uint8_t reg);
 /* Every transfer fails with -EIO */
 void bmx160_emul_set_fail(const struct emul *target, bool fail);
+/*
+ * Reads starting at reg fail with -EIO; writes to it still work. BMX160_EMUL_NO_REG for
+ * none. E.g. a GYR_RANGE write that lands but whose read-back fails.
+ */
+void bmx160_emul_fail_reads_of(const struct emul *target, uint8_t reg);
 
 /* CMD writes since boot, oldest first, up to 32 */
 size_t bmx160_emul_get_cmds(const struct emul *target, const uint8_t **cmds);

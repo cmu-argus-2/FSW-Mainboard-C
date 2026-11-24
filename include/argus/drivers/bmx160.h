@@ -16,6 +16,11 @@
  * | SENSOR_CHAN_MAGN_*     | gauss | uT (1 G = 100 uT) |
  * | SENSOR_CHAN_DIE_TEMP   | degC  | degC          |
  *
+ * Gyro readings are scaled with the range they were measured in, so changing the range
+ * doesn't rescale a sample already fetched. SENSOR_CHAN_DIE_TEMP gives -ENODATA when the
+ * chip has no valid temperature (register value 0x8000). A fetch either updates every
+ * channel it covers or, on error, none of them.
+ *
  * Per-device settings come from devicetree, see dts/bindings/sensor/bosch,bmx160.yaml.
  * Not thread-safe: one thread (the ADCS task) should own the device.
  */
@@ -54,11 +59,20 @@ enum bmx160_gyro_range {
  * reading after a change is off by the ratio of the two ranges (16x for 2000 <-> 125).
  * Setting the range the chip already has doesn't wait.
  *
+ * If the write or its read-back fails, the chip may have the new range anyway. The next
+ * gyro fetch then reads the range from the chip (and waits if it changed) before
+ * returning data, so a sample is never scaled with an unconfirmed range.
+ *
  * @return 0, -EINVAL for an unknown range, -EIO if the read-back differs, or an I2C error.
  */
 int bmx160_set_gyro_range(const struct device *dev, enum bmx160_gyro_range range);
 
-/** @brief The gyro range readings are currently scaled with. Python: the gyro_range getter. */
+/**
+ * @brief The chip's gyro range as last confirmed. Python: the gyro_range getter.
+ *
+ * After a failed bmx160_set_gyro_range() this is the previous range until the next gyro
+ * fetch confirms the chip's actual one.
+ */
 enum bmx160_gyro_range bmx160_get_gyro_range(const struct device *dev);
 
 /**

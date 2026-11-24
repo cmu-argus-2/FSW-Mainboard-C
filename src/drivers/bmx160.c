@@ -91,6 +91,9 @@ LOG_MODULE_REGISTER(bmx160, CONFIG_SENSOR_LOG_LEVEL);
  */
 #define BMX160_GYR_ODR_HZ          50
 #define BMX160_GYR_RANGE_SETTLE_MS (2 * 1000 / BMX160_GYR_ODR_HZ)
+
+/* TEMPERATURE reads 0x8000 when there is no valid reading (e.g. right after start-up) */
+#define BMX160_TEMP_INVALID INT16_MIN
 /* The chip needs 450 us between writes while any sensor is suspended, as during init */
 #define BMX160_WRITE_GAP_US        450
 /* Python gives a BMM150 transfer 1 ms. Poll for up to 2 ms. */
@@ -126,8 +129,10 @@ struct bmx160_data {
 	uint16_t rhall; /* raw register; the ADC value is in the upper 14 bits */
 	int16_t temp;
 	struct bmx160_trim trim;
-	uint8_t gyro_range;  /* as read back from the chip */
-	uint8_t accel_g;     /* full scale in g, from the ACC_RANGE read-back */
+	uint8_t gyro_range;        /* the chip's range, as last read back */
+	bool gyro_range_known;     /* false if a range write may have changed it unconfirmed */
+	uint8_t gyro_sample_range; /* the range gyro[] was measured in */
+	uint8_t accel_g;           /* full scale in g, from the ACC_RANGE read-back */
 };
 
 /* --- Register access (Python: read_u8, read_bytes, write_u8) --- */
@@ -409,6 +414,9 @@ static int bmx160_init_accel(const struct device *dev)
  * Write GYR_RANGE and read it back. Readings are scaled with the range the chip reports,
  * even if it isn't what was asked for. Doesn't wait for fresh data: see
  * bmx160_set_gyro_range().
+ *
+ * If the write or the read-back fails, the chip may or may not have the new range. The
+ * range is then marked unknown, and the next gyro fetch reads it before returning data.
  */
 static int bmx160_write_gyro_range(const struct device *dev, enum bmx160_gyro_range range)
 {
@@ -425,10 +433,12 @@ static int bmx160_write_gyro_range(const struct device *dev, enum bmx160_gyro_ra
 		ret = bmx160_read(dev, BMX160_REG_GYR_RANGE, &readback, 1);
 	}
 	if (ret < 0) {
+		data->gyro_range_known = false;
 		return ret;
 	}
 
-	if (readback < ARRAY_SIZE(gyro_range_dps)) {
+	data->gyro_range_known = readback < ARRAY_SIZE(gyro_range_dps);
+	if (data->gyro_range_known) {
 		data->gyro_range = readback;
 	}
 	if (readback != range) {
@@ -502,33 +512,75 @@ static void get_xyz(const uint8_t *buf, int16_t out[3])
 	}
 }
 
+/*
+ * Before reading gyro data after an unconfirmed range write, find out which range the
+ * chip is in. If it changed, wait for samples taken in it, as bmx160_set_gyro_range() does.
+ */
+static int bmx160_confirm_gyro_range(const struct device *dev)
+{
+	struct bmx160_data *data = dev->data;
+	uint8_t range;
+	int ret;
+
+	if (data->gyro_range_known) {
+		return 0;
+	}
+
+	ret = bmx160_read(dev, BMX160_REG_GYR_RANGE, &range, 1);
+	if (ret < 0) {
+		return ret;
+	}
+	if (range >= ARRAY_SIZE(gyro_range_dps)) {
+		LOG_ERR("%s: invalid gyro range 0x%02x", dev->name, range);
+		return -EIO;
+	}
+
+	bool changed = range != data->gyro_range;
+
+	data->gyro_range = range;
+	data->gyro_range_known = true;
+	if (changed) {
+		k_msleep(BMX160_GYR_RANGE_SETTLE_MS);
+	}
+	return 0;
+}
+
 static int bmx160_sample_fetch(const struct device *dev, enum sensor_channel chan)
 {
 	struct bmx160_data *data = dev->data;
 	uint8_t buf[20];
+	uint8_t temp_buf[2];
 	int ret;
 
 	switch (chan) {
 	case SENSOR_CHAN_ALL:
+		ret = bmx160_confirm_gyro_range(dev);
 		/* MAG, RHALL, GYR, ACC in one burst so all three come from the same moment */
-		ret = bmx160_read(dev, BMX160_REG_DATA_MAG, buf, 20);
+		if (ret == 0) {
+			ret = bmx160_read(dev, BMX160_REG_DATA_MAG, buf, 20);
+		}
+		if (ret == 0) {
+			ret = bmx160_read(dev, BMX160_REG_TEMP, temp_buf, 2);
+		}
+		/* Keep the previous sample unless both reads succeeded, so they stay a set */
 		if (ret < 0) {
 			return ret;
 		}
 		get_xyz(&buf[0], data->mag);
 		data->rhall = sys_get_le16(&buf[6]);
 		get_xyz(&buf[8], data->gyro);
+		data->gyro_sample_range = data->gyro_range;
 		get_xyz(&buf[14], data->accel);
-		ret = bmx160_read(dev, BMX160_REG_TEMP, buf, 2);
-		if (ret < 0) {
-			return ret;
-		}
-		data->temp = (int16_t)sys_get_le16(buf);
+		data->temp = (int16_t)sys_get_le16(temp_buf);
 		return 0;
 	case SENSOR_CHAN_GYRO_XYZ:
-		ret = bmx160_read(dev, BMX160_REG_DATA_GYR, buf, 6);
+		ret = bmx160_confirm_gyro_range(dev);
+		if (ret == 0) {
+			ret = bmx160_read(dev, BMX160_REG_DATA_GYR, buf, 6);
+		}
 		if (ret == 0) {
 			get_xyz(buf, data->gyro);
+			data->gyro_sample_range = data->gyro_range;
 		}
 		return ret;
 	case SENSOR_CHAN_ACCEL_XYZ:
@@ -643,8 +695,12 @@ static int bmx160_channel_get(const struct device *dev, enum sensor_channel chan
 	case SENSOR_CHAN_GYRO_Y:
 	case SENSOR_CHAN_GYRO_Z:
 	case SENSOR_CHAN_GYRO_XYZ: {
-		/* Python: GYR_SCALAR = range / 32768 deg/s per LSB, in rad/s */
-		float scale = gyro_range_dps[data->gyro_range] / 32768.0f * BMX160_PI / 180.0f;
+		/*
+		 * Python: GYR_SCALAR = range / 32768 deg/s per LSB, in rad/s. Scale with the range
+		 * the sample was measured in: the range may have changed since the fetch.
+		 */
+		float scale =
+			gyro_range_dps[data->gyro_sample_range] / 32768.0f * BMX160_PI / 180.0f;
 
 		for (int i = 0; i < 3; i++) {
 			v[i] = data->gyro[i] * scale;
@@ -673,6 +729,10 @@ static int bmx160_channel_get(const struct device *dev, enum sensor_channel chan
 		}
 		return put_axes(chan, SENSOR_CHAN_MAGN_X, v, val);
 	case SENSOR_CHAN_DIE_TEMP:
+		/* Python reports 0x8000 as -41 degC; the datasheet says it means no reading */
+		if (data->temp == BMX160_TEMP_INVALID) {
+			return -ENODATA;
+		}
 		/* Python: temperature(). 0 is 23 degC, 1/512 K per LSB. */
 		return sensor_value_from_float(val, data->temp / 512.0f + 23.0f);
 	default:
