@@ -119,6 +119,11 @@ sequence, register values, scaling and BMM150 compensation. The differences:
 - Writes are spaced 450 us apart, as the chip needs while a sensor is suspended.
 - A gyro range write is read back. If it didn't take, `bmx160_set_gyro_range()` returns
   `-EIO`, and readings keep the scale of the range the chip actually holds.
+- After a gyro range change, `bmx160_set_gyro_range()` waits 40 ms (two gyro samples)
+  before returning. Without that, the next read is a sample taken in the old range but
+  scaled by the new one: on hardware, 4-5 deg/s instead of 0.3 deg/s after 125 -> 2000,
+  and 0.02 instead of 0.3 after 2000 -> 125. Python doesn't wait, so its log still shows
+  that spike on the line after each `=== gyro range` switch; `compare_logs.py` skips it.
 
 The register values match what Python writes, which isn't always what its code intends.
 Its ODR setters write bare ODR codes, which also clear the filter bits: accel runs at

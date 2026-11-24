@@ -49,6 +49,11 @@ enum bmx160_gyro_range {
  * Writes GYR_RANGE and reads it back. Later gyro readings are scaled with the range the
  * chip reports, so a failed write never leaves readings scaled for the wrong range.
  *
+ * When the range changes, this sleeps 40 ms (two gyro samples) before returning, so the
+ * next read is a sample taken in the new range. Python doesn't wait, and its first
+ * reading after a change is off by the ratio of the two ranges (16x for 2000 <-> 125).
+ * Setting the range the chip already has doesn't wait.
+ *
  * @return 0, -EINVAL for an unknown range, -EIO if the read-back differs, or an I2C error.
  */
 int bmx160_set_gyro_range(const struct device *dev, enum bmx160_gyro_range range);

@@ -85,6 +85,12 @@ LOG_MODULE_REGISTER(bmx160, CONFIG_SENSOR_LOG_LEVEL);
 #define BMX160_MAG_WARMUP_MS       100
 #define BMX160_ACC_NORMAL_DELAY_MS 5
 #define BMX160_GYR_NORMAL_DELAY_MS 80
+/*
+ * After a gyro range change, wait two sample periods at the gyro's 50 Hz rate
+ * (BMX160_GYR_CONF_VAL) so the data registers hold a sample taken in the new range.
+ */
+#define BMX160_GYR_ODR_HZ          50
+#define BMX160_GYR_RANGE_SETTLE_MS (2 * 1000 / BMX160_GYR_ODR_HZ)
 /* The chip needs 450 us between writes while any sensor is suspended, as during init */
 #define BMX160_WRITE_GAP_US        450
 /* Python gives a BMM150 transfer 1 ms. Poll for up to 2 ms. */
@@ -399,12 +405,47 @@ static int bmx160_init_accel(const struct device *dev)
 	return bmx160_check_err(dev, 0xFF, "accel normal mode");
 }
 
+/*
+ * Write GYR_RANGE and read it back. Readings are scaled with the range the chip reports,
+ * even if it isn't what was asked for. Doesn't wait for fresh data: see
+ * bmx160_set_gyro_range().
+ */
+static int bmx160_write_gyro_range(const struct device *dev, enum bmx160_gyro_range range)
+{
+	struct bmx160_data *data = dev->data;
+	uint8_t readback;
+	int ret;
+
+	if ((unsigned int)range >= ARRAY_SIZE(gyro_range_dps)) {
+		return -EINVAL;
+	}
+
+	ret = bmx160_write(dev, BMX160_REG_GYR_RANGE, range);
+	if (ret == 0) {
+		ret = bmx160_read(dev, BMX160_REG_GYR_RANGE, &readback, 1);
+	}
+	if (ret < 0) {
+		return ret;
+	}
+
+	if (readback < ARRAY_SIZE(gyro_range_dps)) {
+		data->gyro_range = readback;
+	}
+	if (readback != range) {
+		LOG_ERR("%s: gyro range read back 0x%02x, wrote 0x%02x", dev->name, readback,
+			range);
+		return -EIO;
+	}
+	return 0;
+}
+
 static int bmx160_init_gyro(const struct device *dev)
 {
 	const struct bmx160_config *cfg = dev->config;
 	int ret;
 
-	ret = bmx160_set_gyro_range(dev, cfg->gyro_range);
+	/* The gyro is still suspended here, and the normal-mode wait below covers start-up */
+	ret = bmx160_write_gyro_range(dev, cfg->gyro_range);
 	if (ret == 0) {
 		ret = bmx160_write(dev, BMX160_REG_GYR_CONF, BMX160_GYR_CONF_VAL);
 	}
@@ -426,31 +467,18 @@ static int bmx160_init_gyro(const struct device *dev)
 int bmx160_set_gyro_range(const struct device *dev, enum bmx160_gyro_range range)
 {
 	struct bmx160_data *data = dev->data;
-	uint8_t readback;
-	int ret;
+	uint8_t before = data->gyro_range;
+	int ret = bmx160_write_gyro_range(dev, range);
 
-	if ((unsigned int)range >= ARRAY_SIZE(gyro_range_dps)) {
-		return -EINVAL;
+	/*
+	 * The data registers still hold samples taken in the old range, and reading one now
+	 * would scale it by the new range: off by up to 16x (seen on hardware, in the Python
+	 * driver too). Wait until the gyro has written samples in the new range.
+	 */
+	if (data->gyro_range != before) {
+		k_msleep(BMX160_GYR_RANGE_SETTLE_MS);
 	}
-
-	ret = bmx160_write(dev, BMX160_REG_GYR_RANGE, range);
-	if (ret == 0) {
-		ret = bmx160_read(dev, BMX160_REG_GYR_RANGE, &readback, 1);
-	}
-	if (ret < 0) {
-		return ret;
-	}
-
-	/* Scale with what the chip holds, even if it isn't what was asked for */
-	if (readback < ARRAY_SIZE(gyro_range_dps)) {
-		data->gyro_range = readback;
-	}
-	if (readback != range) {
-		LOG_ERR("%s: gyro range read back 0x%02x, wrote 0x%02x", dev->name, readback,
-			range);
-		return -EIO;
-	}
-	return 0;
+	return ret;
 }
 
 enum bmx160_gyro_range bmx160_get_gyro_range(const struct device *dev)

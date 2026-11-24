@@ -31,17 +31,28 @@ def parse(path):
 
     Skips tick 0 (and anything before it): the first read comes right after init,
     before the chip has data, and the Python driver returns all zeros there.
+
+    Also skips the first gyro sample after each range switch. The Python driver reads
+    a stale sample there, scaled by the new range (16x off); the C driver waits for a
+    fresh one. Keeping it would count a known Python quirk as a C/Python difference.
     """
     fields = {}
     tick = None
+    skip_gyro = False
     with open(path, errors="replace") as f:
         for raw in f:
             line = raw.strip()
+            if line.startswith("=== gyro range"):
+                skip_gyro = True
+                continue
             m = TICK.match(line)
             if m:
                 tick = int(m.group(1))
                 continue
             if tick is None or tick == 0:
+                continue
+            if skip_gyro and line.startswith("gyro"):
+                skip_gyro = False
                 continue
             for name, pattern in PATTERNS.items():
                 m = pattern.match(line)

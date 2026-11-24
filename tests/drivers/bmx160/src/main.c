@@ -125,6 +125,46 @@ ZTEST(bmx160, test_gyro_range_change)
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(62.5f), 1e-4f);
 }
 
+/*
+ * After a range change the data registers still hold an old-range sample (seen on
+ * hardware: 16x off for 2000 <-> 125), so a change waits two 50 Hz gyro samples.
+ */
+#define RANGE_SETTLE_MS 40
+
+static int64_t time_set_range(enum bmx160_gyro_range range, int expected_ret)
+{
+	int64_t start = k_uptime_get();
+
+	zassert_equal(bmx160_set_gyro_range(imu, range), expected_ret);
+	return k_uptime_get() - start;
+}
+
+ZTEST(bmx160, test_gyro_range_change_waits_for_new_samples)
+{
+	int64_t ms = time_set_range(BMX160_GYRO_RANGE_2000DPS, 0);
+
+	zassert_true(ms >= RANGE_SETTLE_MS, "range change returned after %lld ms", (long long)ms);
+}
+
+/* Same range again: nothing changes on the chip, so no wait (ADCS may re-send it) */
+ZTEST(bmx160, test_gyro_range_unchanged_does_not_wait)
+{
+	int64_t ms = time_set_range(BMX160_GYRO_RANGE_500DPS, 0);
+
+	zassert_true(ms < RANGE_SETTLE_MS, "unchanged range took %lld ms", (long long)ms);
+}
+
+/* Failed changes leave the chip in the old range, so there is nothing to wait for */
+ZTEST(bmx160, test_gyro_range_failed_change_does_not_wait)
+{
+	bmx160_emul_ignore_writes(imu_emul, BMX160_EMUL_REG_GYR_RANGE);
+	zassert_true(time_set_range(BMX160_GYRO_RANGE_2000DPS, -EIO) < RANGE_SETTLE_MS);
+
+	bmx160_emul_ignore_writes(imu_emul, BMX160_EMUL_NO_REG);
+	bmx160_emul_set_fail(imu_emul, true);
+	zassert_true(time_set_range(BMX160_GYRO_RANGE_2000DPS, -EIO) < RANGE_SETTLE_MS);
+}
+
 ZTEST(bmx160, test_gyro_range_invalid)
 {
 	zassert_equal(bmx160_set_gyro_range(imu, 5), -EINVAL);
