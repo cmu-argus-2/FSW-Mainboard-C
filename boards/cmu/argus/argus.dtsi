@@ -233,6 +233,12 @@ gpio0_lo: &gpio0 {
 		reg = <0x46>;
 		conversion-time = <0>;
 	};
+
+	/* Address from IMU_I2C_ADDRESS in flight/hal/argus_v4.py. Only SDA/SCL are wired. */
+	imu: bmx160@68 {
+		compatible = "bosch,bmx160";
+		reg = <0x68>;
+	};
 };
 
 &i2c1 {

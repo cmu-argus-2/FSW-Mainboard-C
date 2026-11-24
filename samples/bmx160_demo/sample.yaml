@@ -1,0 +1,13 @@
+sample:
+  name: Argus BMX160 demo
+  description: Print the BMX160 gyro, accelerometer, magnetometer and temperature twice a second
+tests:
+  sample.argus.bmx160_demo:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - sensors
