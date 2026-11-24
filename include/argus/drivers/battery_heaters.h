@@ -59,6 +59,8 @@ int battery_heaters_enabled(const struct device *dev, enum battery_heater heater
 /* Enable or disable both heaters in one call, in the shape of the EPS task's
  * set_heaters callback. Enables are applied before disables. Requesting
  * heater 1 on a single-heater board returns -ENOTSUP without changing anything.
+ * set(false, false) lowers HEAT_EN first, then both heater lines, without
+ * consulting readback; every line is attempted and the first error returned.
  */
 int battery_heaters_set(const struct device *dev, bool heater0, bool heater1);
 

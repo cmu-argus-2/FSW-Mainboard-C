@@ -19,7 +19,7 @@ static const uint8_t line_error[LINE_COUNT] = {
 
 struct battery_heaters_config {
 	struct gpio_dt_spec lines[LINE_COUNT];
-	bool has_heat1;
+	bool has_heat1; /* true if board has a second heater (DT heat1-on-gpios) */
 };
 
 struct battery_heaters_data {
@@ -84,6 +84,23 @@ static int enable_locked(const struct device *dev, enum line line)
 		return ret;
 	}
 	return write_line(dev, line, true);
+}
+
+/* All-off: lower HEAT_EN first so power is cut even if a heater line is
+ * stuck high, and attempt every line even if one write fails.
+ */
+static int disable_all_locked(const struct device *dev)
+{
+	const struct battery_heaters_config *config = dev->config;
+	int ret = write_line(dev, LINE_EN, false);
+	int err = write_line(dev, LINE_HEAT0, false);
+
+	ret = ret != 0 ? ret : err;
+	if (config->has_heat1) {
+		err = write_line(dev, LINE_HEAT1, false);
+		ret = ret != 0 ? ret : err;
+	}
+	return ret;
 }
 
 static int disable_locked(const struct device *dev, enum line line)
@@ -176,6 +193,11 @@ int battery_heaters_set(const struct device *dev, bool heater0, bool heater1)
 		return -ENOTSUP;
 	}
 	k_mutex_lock(&data->lock, K_FOREVER);
+	if (!heater0 && !heater1) {
+		ret = disable_all_locked(dev);
+		k_mutex_unlock(&data->lock);
+		return ret;
+	}
 	if (heater0) {
 		ret = enable_locked(dev, LINE_HEAT0);
 	}
