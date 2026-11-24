@@ -10,6 +10,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#include "argus/drivers/battery_heaters.h"
 #include "argus/drivers/drv8235.h"
 #include "argus/drivers/max17205.h"
 
@@ -44,20 +45,17 @@ static const char *const coil_names[EPS_COIL_COUNT] = {
 	[EPS_ZM] = "DRV8235 ZM",
 };
 static const struct device *const coil_power = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(coil_power));
+static const struct device *const heaters = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(battery_heaters));
 static const struct device *const gauge = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(fuel_gauge));
 static const struct device *const cpu_temp = DEVICE_DT_GET_OR_NULL(DT_ALIAS(die_temp0));
 
 #define EPS_GPIO(prop) GPIO_DT_SPEC_GET_OR(DT_PATH(zephyr_user), prop, {0})
 static const struct gpio_dt_spec gps_power = EPS_GPIO(gps_en_gpios);
 static const struct gpio_dt_spec radio_power = EPS_GPIO(lora_en_gpios);
-static const struct gpio_dt_spec heat_enable = EPS_GPIO(heat_en_gpios);
-static const struct gpio_dt_spec heat0 = EPS_GPIO(heat0_on_gpios);
-static const struct gpio_dt_spec heat1 = EPS_GPIO(heat1_on_gpios);
 
 static struct {
 	bool initialized;
 	bool coils_ready[EPS_COIL_COUNT];
-	bool heaters_ready;
 	bool heater_state_known;
 	bool first;
 	bool second;
@@ -131,56 +129,24 @@ static void init_coils(void)
 	}
 }
 
-static bool init_heaters(void)
-{
-	const struct gpio_dt_spec *pins[] = {&heat_enable, &heat0, &heat1};
-
-	for (size_t i = 0; i < ARRAY_SIZE(pins); ++i) {
-		if (pins[i]->port == NULL || !gpio_is_ready_dt(pins[i]) ||
-		    gpio_pin_configure_dt(pins[i], GPIO_OUTPUT_INACTIVE) != 0) {
-			LOG_WRN("Heater GPIO initialization failed");
-			return false;
-		}
-	}
-	return true;
-}
-
-static int write_heaters(bool first, bool second)
-{
-	/* Gate off before clearing both channels. Program the channels before
-	 * asserting the shared enable when either channel is requested.
-	 */
-	int ret = first || second ? 0 : gpio_pin_set_dt(&heat_enable, 0);
-
-	if (ret == 0) {
-		ret = gpio_pin_set_dt(&heat0, first);
-	}
-	if (ret == 0) {
-		ret = gpio_pin_set_dt(&heat1, second);
-	}
-	if (ret == 0 && (first || second)) {
-		ret = gpio_pin_set_dt(&heat_enable, 1);
-	}
-	return ret;
-}
-
 static int set_heaters(void *context, bool first, bool second)
 {
 	ARG_UNUSED(context);
-	if (!hardware.heaters_ready) {
+	if (!device_is_ready(heaters)) {
 		return report_io_result("Battery heaters", "write", -ENODEV, &hardware.heater_error);
 	}
 	if (hardware.heater_state_known && first == hardware.first && second == hardware.second) {
 		return report_io_result("Battery heaters", "write", 0, &hardware.heater_error);
 	}
-	int ret = write_heaters(first, second);
+	int ret = battery_heaters_set(heaters, first, second);
 
 	if (ret == 0) {
 		hardware.first = first;
 		hardware.second = second;
 		hardware.heater_state_known = true;
 	} else {
-		int restore = write_heaters(hardware.first, hardware.second);
+		/* A driver error can follow a partial write. Restore the last accepted pair. */
+		int restore = battery_heaters_set(heaters, hardware.first, hardware.second);
 
 		hardware.heater_state_known = restore == 0;
 		if (!hardware.heater_state_known) {
@@ -318,8 +284,7 @@ static int read_fuel(void *context, struct eps_fuel *out)
 struct eps_io eps_hardware_io(void)
 {
 	if (!hardware.initialized) {
-		hardware.heaters_ready = init_heaters();
-		hardware.heater_state_known = hardware.heaters_ready;
+		(void)set_heaters(NULL, false, false);
 		int ret = enable_power(&gps_power);
 
 		if (ret != 0) {

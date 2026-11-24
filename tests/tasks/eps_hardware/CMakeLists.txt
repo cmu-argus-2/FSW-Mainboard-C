@@ -10,6 +10,7 @@ target_sources(app PRIVATE
     ${ARGUS_ROOT}/src/apps/eps/eps.c
     ${ARGUS_ROOT}/src/tasks/eps.c
     ${ARGUS_ROOT}/src/drivers/adm1176.c
+    ${ARGUS_ROOT}/src/drivers/battery_heaters.c
     ${ARGUS_ROOT}/src/drivers/drv8235.c
     ${ARGUS_ROOT}/src/drivers/max17205.c
     ${ARGUS_ROOT}/tests/drivers/adm1176/src/adm1176_emul.c

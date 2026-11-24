@@ -4,6 +4,7 @@
 #include "drv8235_emul.h"
 #include "max17205_emul.h"
 #include "argus/drivers/adm1176.h"
+#include "argus/drivers/battery_heaters.h"
 #include "argus/drivers/max17205.h"
 
 #include <errno.h>
@@ -182,12 +183,20 @@ ZTEST(eps_hardware, test_signed_pack_and_exact_shadow_offset)
 
 ZTEST(eps_hardware, test_heater_shared_enable_and_hysteresis)
 {
+	struct battery_heaters_errors errors;
+	const struct device *heaters = DEVICE_DT_GET(DT_NODELABEL(battery_heaters));
+
+	zassert_true(device_is_ready(heaters));
 	max17205_emul_set_reg(gauge_emul, 0x0b, 0x34, 2731);
 	max17205_emul_set_reg(gauge_emul, 0x0b, 0x3b, 2731);
 	five_runs();
 	zassert_equal(gpio_emul_output_get(gpio, 0), 1);
 	zassert_equal(gpio_emul_output_get(gpio, 1), 1);
 	zassert_equal(gpio_emul_output_get(gpio, 2), 1);
+
+	/* Both pad levels must match the commands recorded by the driver. */
+	zassert_ok(battery_heaters_device_errors(heaters, &errors));
+	zassert_equal(errors.count, 0);
 
 	/* 2782 dK is 5.05 C, above the 5 C exit threshold. */
 	max17205_emul_set_reg(gauge_emul, 0x0b, 0x34, 2782);

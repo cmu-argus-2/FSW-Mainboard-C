@@ -9,10 +9,14 @@
 		ngpios = <8>;
 	};
 
-	zephyr,user {
+	battery_heaters: battery-heaters {
+		compatible = "cmu,battery-heaters";
 		heat-en-gpios = <&eps_test_gpio 0 GPIO_ACTIVE_HIGH>;
 		heat0-on-gpios = <&eps_test_gpio 1 GPIO_ACTIVE_HIGH>;
 		heat1-on-gpios = <&eps_test_gpio 2 GPIO_ACTIVE_HIGH>;
+	};
+
+	zephyr,user {
 		lora-en-gpios = <&eps_test_gpio 3 GPIO_ACTIVE_HIGH>;
 		gps-en-gpios = <&eps_test_gpio 5 GPIO_ACTIVE_HIGH>;
 	};
