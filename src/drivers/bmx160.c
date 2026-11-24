@@ -478,14 +478,20 @@ int bmx160_set_gyro_range(const struct device *dev, enum bmx160_gyro_range range
 {
 	struct bmx160_data *data = dev->data;
 	uint8_t before = data->gyro_range;
+	bool was_known = data->gyro_range_known;
 	int ret = bmx160_write_gyro_range(dev, range);
 
 	/*
 	 * The data registers still hold samples taken in the old range, and reading one now
 	 * would scale it by the new range: off by up to 16x (seen on hardware, in the Python
 	 * driver too). Wait until the gyro has written samples in the new range.
+	 *
+	 * Also wait if the range wasn't known before: an unconfirmed write may have switched
+	 * the chip to another range in between (e.g. 125 -> 2000 unconfirmed -> 125), so the
+	 * registers can hold old-range samples even though the range matches the cached one.
+	 * If the range is still unknown, the next gyro fetch confirms it and waits instead.
 	 */
-	if (data->gyro_range != before) {
+	if (data->gyro_range_known && (!was_known || data->gyro_range != before)) {
 		k_msleep(BMX160_GYR_RANGE_SETTLE_MS);
 	}
 	return ret;
@@ -514,7 +520,7 @@ static void get_xyz(const uint8_t *buf, int16_t out[3])
 
 /*
  * Before reading gyro data after an unconfirmed range write, find out which range the
- * chip is in. If it changed, wait for samples taken in it, as bmx160_set_gyro_range() does.
+ * chip is in, then wait for samples taken in it, as bmx160_set_gyro_range() does.
  */
 static int bmx160_confirm_gyro_range(const struct device *dev)
 {
@@ -535,13 +541,14 @@ static int bmx160_confirm_gyro_range(const struct device *dev)
 		return -EIO;
 	}
 
-	bool changed = range != data->gyro_range;
-
+	/*
+	 * Always wait here, even if the range matches the cached one: while it was unknown,
+	 * the chip may have been through another range (e.g. 125 -> 2000 -> 125 with both
+	 * read-backs failing), so the registers can hold samples from it.
+	 */
 	data->gyro_range = range;
 	data->gyro_range_known = true;
-	if (changed) {
-		k_msleep(BMX160_GYR_RANGE_SETTLE_MS);
-	}
+	k_msleep(BMX160_GYR_RANGE_SETTLE_MS);
 	return 0;
 }
 

@@ -229,7 +229,10 @@ ZTEST(bmx160, test_gyro_range_readback_fails)
 	zassert_true(ms < RANGE_SETTLE_MS, "confirmed range still waited %lld ms", (long long)ms);
 }
 
-/* The write itself fails: if the chip kept its range, the check finds no change, no wait */
+/*
+ * The write itself fails. The driver can't tell whether it reached the chip, so the next
+ * fetch confirms the range and waits, even though here the chip kept 500 deg/s.
+ */
 ZTEST(bmx160, test_gyro_range_write_fails_range_unchanged)
 {
 	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
@@ -240,9 +243,59 @@ ZTEST(bmx160, test_gyro_range_write_fails_range_unchanged)
 	int64_t start = k_uptime_get();
 
 	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
-	zassert_true(k_uptime_get() - start < RANGE_SETTLE_MS);
+	zassert_true(k_uptime_get() - start >= RANGE_SETTLE_MS);
 	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_500DPS);
 	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(250.0f), 1e-4f);
+}
+
+/*
+ * Review case: at 125, a 2000 write lands but its read-back fails (chip at 2000, cache
+ * still 125). Setting 125 again matches the cache, but the chip did go 2000 -> 125, so
+ * its registers can hold 2000-range samples: the call must still wait.
+ */
+ZTEST(bmx160, test_gyro_range_back_to_cached_after_unconfirmed_write)
+{
+	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS));
+
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_REG_GYR_RANGE);
+	zassert_equal(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS), -EIO);
+	zassert_equal(bmx160_emul_get_reg(imu_emul, BMX160_EMUL_REG_GYR_RANGE), 0x00);
+	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_125DPS); /* cached */
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_NO_REG);
+
+	int64_t ms = time_set_range(BMX160_GYRO_RANGE_125DPS, 0);
+
+	zassert_true(ms >= RANGE_SETTLE_MS, "returning to the cached range took only %lld ms",
+		     (long long)ms);
+
+	/* Confirmed now: setting it again doesn't wait */
+	zassert_true(time_set_range(BMX160_GYRO_RANGE_125DPS, 0) < RANGE_SETTLE_MS);
+}
+
+/*
+ * The same through the fetch path: 125 -> 2000 -> 125 with both read-backs failing. The
+ * fetch reads 125, the cached range, but must still wait before returning data.
+ */
+ZTEST(bmx160, test_gyro_fetch_confirms_unknown_range_and_waits)
+{
+	set_xyz(BMX160_EMUL_REG_DATA_GYR, 16384, 0, 0);
+	zassert_ok(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS));
+
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_REG_GYR_RANGE);
+	zassert_equal(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_2000DPS), -EIO);
+	zassert_equal(bmx160_set_gyro_range(imu, BMX160_GYRO_RANGE_125DPS), -EIO);
+	zassert_equal(bmx160_emul_get_reg(imu_emul, BMX160_EMUL_REG_GYR_RANGE), 0x04);
+	bmx160_emul_fail_reads_of(imu_emul, BMX160_EMUL_NO_REG);
+
+	int64_t start = k_uptime_get();
+
+	zassert_ok(sensor_sample_fetch_chan(imu, SENSOR_CHAN_GYRO_XYZ));
+	int64_t ms = k_uptime_get() - start;
+
+	zassert_true(ms >= RANGE_SETTLE_MS, "fetch confirming the cached range took only %lld ms",
+		     (long long)ms);
+	zassert_equal(bmx160_get_gyro_range(imu), BMX160_GYRO_RANGE_125DPS);
+	zassert_within(get1(imu, SENSOR_CHAN_GYRO_X), DEG_TO_RAD(62.5f), 1e-4f);
 }
 
 ZTEST(bmx160, test_gyro_range_invalid)

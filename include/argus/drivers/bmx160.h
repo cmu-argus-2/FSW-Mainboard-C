@@ -59,9 +59,10 @@ enum bmx160_gyro_range {
  * reading after a change is off by the ratio of the two ranges (16x for 2000 <-> 125).
  * Setting the range the chip already has doesn't wait.
  *
- * If the write or its read-back fails, the chip may have the new range anyway. The next
- * gyro fetch then reads the range from the chip (and waits if it changed) before
- * returning data, so a sample is never scaled with an unconfirmed range.
+ * If the write or its read-back fails, the chip may have the new range anyway. The range
+ * is then unknown until confirmed, by the next successful call or gyro fetch, and that
+ * confirmation always waits 40 ms: the chip may have been through another range in
+ * between. So a sample is never scaled with an unconfirmed range.
  *
  * @return 0, -EINVAL for an unknown range, -EIO if the read-back differs, or an I2C error.
  */
