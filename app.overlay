@@ -1,7 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-/* EPS uses the RP2350 die-temperature channel for the heater fallback. */
+/* The ADC driver requires a default state. Die temperature uses no external pins. */
+&pinctrl {
+	eps_adc_default: eps-adc-default {};
+};
+
 &adc {
+	pinctrl-0 = <&eps_adc_default>;
+	pinctrl-names = "default";
 	status = "okay";
 };
 
