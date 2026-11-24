@@ -1,0 +1,14 @@
+sample:
+  name: Argus magnetorquer field sweep (C port of mag_hyst.py)
+  description: Sweeps each coil from -1 to +1 and logs the BMX160 field and all coil voltages and currents
+tests:
+  sample.argus.drv8235_mag_hyst:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - i2c
+      - actuator

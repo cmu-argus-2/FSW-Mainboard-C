@@ -25,7 +25,10 @@ struct drv8235_faults {
 	bool overcurrent;
 	bool overvoltage;
 	bool thermal_shutdown;
-	/* NPOR is active low: a reset indication, not a UVLO measurement. */
+	/* NPOR bit set: the chip reset (power-on or VM undervoltage) since the last
+	 * CLR_FLT, so its configuration is back at defaults. Clear in normal use, as
+	 * read on Argus hardware (FAULT_STATUS 0x00 after init) and as in Python.
+	 */
 	bool power_on_reset;
 };
 
@@ -81,7 +84,7 @@ int drv8235_read_voltage_current(const struct device *dev, float *volts, float *
 
 /** Read flags and, if FAULT is set, clear them afterwards as in Python/Rust.
  * Clearing first selects zero/coast to avoid restarting the previous command.
- * NPOR decoding is corrected; a detected reset requires init before driving. */
+ * NPOR set means the chip reset; a detected reset requires init before driving. */
 int drv8235_get_faults(const struct device *dev, struct drv8235_faults *faults);
 
 /** Select zero/coast and clear faults. Does not replace init after a reset. */

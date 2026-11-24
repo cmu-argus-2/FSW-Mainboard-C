@@ -34,8 +34,9 @@ The focused tests cover:
   demonstrate that DT properties are used rather than hardcoded.
 - Python-compatible voltage/sign behavior and the team's EPS current conversion
   (raw * 3.7 / 192 A) in all four modes, including nonzero brake current.
-- Correct active-low NPOR, fault reporting/clearing, reset recovery and setters
-  remaining usable with a latched FAULT (including zero/brake).
+- NPOR: set (1) means a reset, clear means normal use. Argus hardware reads
+  FAULT_STATUS 0x00 after init. Also fault reporting/clearing, reset recovery, and
+  setters remaining usable with a latched FAULT (including zero/brake).
 - I2C error propagation, failed command cleanup and invalid arguments.
 
 The emulator models register defaults, protected fields and CLR_FLT/NPOR.

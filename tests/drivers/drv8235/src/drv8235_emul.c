@@ -23,7 +23,8 @@ void drv8235_emul_reset(const struct emul *emul)
 	struct drv8235_emul_data *data = emul->data;
 
 	memset(data, 0, sizeof(*data));
-	/* Power-on defaults, including NPOR=0 and EN_OUT=0. */
+	/* Power-on defaults: NPOR set (a reset happened) and EN_OUT=0. */
+	data->regs[0x00] = BIT(1);
 	data->regs[0x09] = 0x60;
 	data->regs[0x0C] = 0x63;
 	data->regs[0x0D] = 0x38;
@@ -126,7 +127,7 @@ static int transfer(const struct emul *emul, struct i2c_msg *msgs, int count, in
 	}
 	data->writes[data->write_count++] = (struct drv8235_emul_write){reg, value};
 	if (reg == 0x09 && (value & BIT(1))) {
-		data->regs[0x00] = BIT(1); /* CLR_FLT latches NPOR high. */
+		data->regs[0x00] = 0; /* CLR_FLT clears every flag, NPOR included. */
 		value &= (uint8_t)~BIT(1);
 	}
 	data->regs[reg] = value;
