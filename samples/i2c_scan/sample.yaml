@@ -1,0 +1,13 @@
+sample:
+  name: Argus I2C bus scan
+  description: Probe every address on each I2C bus and compare with the devicetree
+tests:
+  sample.argus.i2c_scan:
+    build_only: true
+    platform_allow:
+      - argus/rp2350b/m33_0
+    integration_platforms:
+      - argus/rp2350b/m33_0
+    tags:
+      - drivers
+      - i2c
