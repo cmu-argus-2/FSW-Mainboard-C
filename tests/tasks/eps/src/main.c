@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "argus/tasks/eps.h"
+#include "argus/tasks/eps_task.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
