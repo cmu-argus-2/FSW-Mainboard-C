@@ -14,7 +14,10 @@ target_sources(app PRIVATE
         src/drivers/drv8235.c
         src/drivers/max17205.c
         src/drivers/opt4003.c
+        src/apps/adcs/adcs.c
         src/apps/eps/eps.c
+        src/tasks/adcs.c
+        src/tasks/adcs_runner.c
         src/tasks/eps.c
         src/tasks/eps_runner.c
 )
