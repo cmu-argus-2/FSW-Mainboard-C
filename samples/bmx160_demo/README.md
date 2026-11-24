@@ -43,7 +43,7 @@ If init failed, the demo reads the chip ID again once a second and prints one of
 
 | Line | Meaning |
 |---|---|
-| `init failed: I2C error at 0x68 (-5)` | Nothing answered. Check `PERIPH_PWR_EN`, the IMU fuse, and run `samples/i2c_scan`. |
+| `init failed: I2C error at 0x68 (-5)` | Nothing answered. Check `PERIPH_PWR_EN` and the IMU fuse, and scan I2C0 to see whether anything answers at 0x68. |
 | `init failed: chip ID 0xNN` | Something answers but isn't a BMX160 (`0xD8`). `0xD1` is a BMI160, which has no magnetometer. |
 | `init failed at boot, but answers now` | The IMU wasn't ready when init ran at boot: a power-up timing problem. |
 
