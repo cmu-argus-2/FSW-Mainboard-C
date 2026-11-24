@@ -1,0 +1,4 @@
+# Device tree binding vendor prefixes for this repository, added to
+# Zephyr's own list. Format: <prefix><TAB><vendor name>.
+
+cmu	Carnegie Mellon University
