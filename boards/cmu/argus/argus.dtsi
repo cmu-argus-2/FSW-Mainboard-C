@@ -76,10 +76,6 @@
 		coil-en-gpios = <&gpio0_map 1 GPIO_ACTIVE_HIGH>;
 		rw-en-gpios = <&gpio0_map 31 GPIO_ACTIVE_HIGH>;
 
-		heat-en-gpios = <&gpio0_map 6 GPIO_ACTIVE_HIGH>;
-		heat0-on-gpios = <&gpio0_map 4 GPIO_ACTIVE_HIGH>;
-		heat1-on-gpios = <&gpio0_map 5 GPIO_ACTIVE_HIGH>;
-
 		jetson-en-gpios = <&gpio0_map 7 GPIO_ACTIVE_HIGH>;
 		/* Wired to the 5V DC-DC enable, per argus_v4.py. */
 		jetson-sd-req-gpios = <&gpio0_map 18 GPIO_ACTIVE_HIGH>;
@@ -92,6 +88,14 @@
 		 */
 		wdt-en-gpios = <&gpio0_map 15 GPIO_ACTIVE_HIGH>;
 		wdt-wdi-gpios = <&gpio0_map 2 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* Battery-board heaters. The hogs below hold these low until the driver loads. */
+	battery_heaters: battery-heaters {
+		compatible = "cmu,battery-heaters";
+		heat-en-gpios = <&gpio0_map 6 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&gpio0_map 4 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&gpio0_map 5 GPIO_ACTIVE_HIGH>;
 	};
 };
 
