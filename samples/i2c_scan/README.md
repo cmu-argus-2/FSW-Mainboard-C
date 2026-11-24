@@ -40,7 +40,7 @@ i2c1 at 400 kHz: 9 answered, 4 of 12 expected missing
   0x0b                                          answers, not in devicetree
   0x36  fuel_gauge            maxim,max17205    ok
   ...
-  0x54  light_zp_xp           ti,opt4003        MISSING (no ACK)
+  0x54  light_zp_xp           ti,opt4003        MISSING (no response, -EIO)
   ...
 ```
 
@@ -51,12 +51,14 @@ measurement of SCL.
 | Line | Meaning |
 |---|---|
 | `ok` | The expected device answered. |
-| `MISSING (no ACK)` | Nothing answered at that address: not populated, not powered, wrong address, or not connected. |
+| `MISSING (no response, -EIO)` | Usually nothing answered at that address: not populated, not powered, wrong address, or not connected. The driver also returns `-EIO` when the controller loses arbitration, which is a bus fault. An `ARB lost` log line next to it means the latter. |
 | `MISSING (error N)` | The probe failed some other way. See the summary line under that bus. |
+| `not probed (scan stopped)` | The scan of that bus stopped before this address. See the `scan stopped` line. |
 | `answers, not in devicetree` | Something answered at an address the devicetree doesn't list. The MAX17205 fuel gauge also answers at 0x0B (its shadow RAM), so that one is expected. |
-| `N probes failed with error -116 (transfer timed out)` | Probes timed out instead of getting a NACK. `-62` means the controller saw SDA or SCL stuck low. Either way, look for a fault on that bus. |
+| `N probes failed (first error: -116, transfer timed out)` | N probes failed with something other than `-EIO`. Only the first error is named; the others may differ, so check each address. `-116` is a timeout, `-62` means the controller saw SDA or SCL stuck low, `-16` means the bus was busy. Look for a fault on that bus. |
+| `scan stopped at 0xNN after 3 timeouts in a row` | Each timeout takes 500 ms, so the scan gives up on a bus after three in a row instead of spending about a minute on it. The rest of that bus isn't probed this pass. |
 
 The I2C driver's `NACK on ...` log lines are turned off in `prj.conf`, since every empty
 address produces one. Its `ARB lost` and `Stuck Low` lines still print. If every device on a
-bus shows `MISSING (no ACK)` and `ARB lost` lines appear around the scan, something is
-holding SDA low.
+bus shows `MISSING (no response, -EIO)` and `ARB lost` lines appear around the scan,
+something is holding SDA low.

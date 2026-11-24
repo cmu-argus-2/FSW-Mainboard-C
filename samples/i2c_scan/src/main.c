@@ -25,6 +25,16 @@
 
 #define SCAN_PERIOD_MS 5000
 
+/*
+ * Stop probing a bus after this many timeouts in a row. Each one takes the driver's
+ * transfer timeout (CONFIG_I2C_TRANSFER_TIMEOUT_MS, 500 ms by default), so a hung bus
+ * would otherwise hold up the scan for about a minute (112 addresses).
+ */
+#define MAX_TIMEOUTS_IN_A_ROW 3
+
+/* result[] value for addresses after the scan of a bus stopped. Errors are negative. */
+#define NOT_PROBED 1
+
 struct expected_dev {
 	uint16_t addr;
 	const char *label;  /* devicetree node label, e.g. "light_zp_xp" */
@@ -72,9 +82,17 @@ static const char *error_meaning(int err)
 		return "SDA or SCL stuck low";
 	case -ETIMEDOUT:
 		return "transfer timed out";
+	case -EBUSY:
+		return "bus busy";
 	default:
 		return "unexpected error";
 	}
+}
+
+/* The bus isn't completing transfers, as opposed to a device not answering */
+static bool is_timeout(int err)
+{
+	return err == -ETIMEDOUT || err == -ETIME;
 }
 
 static void scan_bus(const struct i2c_bus *bus)
@@ -82,8 +100,11 @@ static void scan_bus(const struct i2c_bus *bus)
 	int result[LAST_ADDR + 1];
 	unsigned int answered = 0;
 	unsigned int missing = 0;
+	unsigned int not_probed = 0;
 	unsigned int other_errors = 0;
 	int first_other_error = 0;
+	unsigned int timeouts_in_a_row = 0;
+	uint16_t stopped_at = 0; /* 0: every address was probed */
 
 	if (!device_is_ready(bus->dev)) {
 		printk("%s: controller not ready\n", bus->label);
@@ -94,27 +115,50 @@ static void scan_bus(const struct i2c_bus *bus)
 	for (uint16_t addr = FIRST_ADDR; addr <= LAST_ADDR; addr++) {
 		uint8_t byte;
 
+		if (stopped_at != 0) {
+			result[addr] = NOT_PROBED;
+			continue;
+		}
+
 		result[addr] = i2c_read(bus->dev, &byte, sizeof(byte), addr);
 		if (result[addr] == 0) {
 			answered++;
 		} else if (result[addr] != -EIO) {
-			/* -EIO is a NACK (or lost arbitration); anything else is a bus problem */
+			/* -EIO is a NACK or lost arbitration; anything else is a bus problem */
 			if (other_errors++ == 0) {
 				first_other_error = result[addr];
 			}
+		}
+
+		timeouts_in_a_row = is_timeout(result[addr]) ? timeouts_in_a_row + 1 : 0;
+		if (timeouts_in_a_row == MAX_TIMEOUTS_IN_A_ROW) {
+			stopped_at = addr;
 		}
 	}
 
 	for (size_t i = 0; i < bus->num_expected; i++) {
 		uint16_t addr = bus->expected[i].addr;
 
-		if (addr < FIRST_ADDR || addr > LAST_ADDR || result[addr] != 0) {
+		if (addr < FIRST_ADDR || addr > LAST_ADDR) {
+			missing++;
+		} else if (result[addr] == NOT_PROBED) {
+			not_probed++;
+		} else if (result[addr] != 0) {
 			missing++;
 		}
 	}
 
-	printk("%s at %u kHz: %u answered, %u of %zu expected missing\n", bus->label,
+	printk("%s at %u kHz: %u answered, %u of %zu expected missing", bus->label,
 	       bus->bitrate / 1000, answered, missing, bus->num_expected);
+	if (not_probed > 0) {
+		printk(", %u not probed", not_probed);
+	}
+	printk("\n");
+
+	if (stopped_at != 0 && stopped_at < LAST_ADDR) {
+		printk("  scan stopped at 0x%02x after %d timeouts in a row; 0x%02x-0x%02x not probed\n",
+		       stopped_at, MAX_TIMEOUTS_IN_A_ROW, stopped_at + 1, LAST_ADDR);
+	}
 
 	/* Devicetree addresses the scan skips, which should never happen */
 	for (size_t i = 0; i < bus->num_expected; i++) {
@@ -140,7 +184,11 @@ static void scan_bus(const struct i2c_bus *bus)
 			if (result[addr] == 0) {
 				printk("  0x%02x  %-22s%-18sok\n", addr, e->label, e->compat);
 			} else if (result[addr] == -EIO) {
-				printk("  0x%02x  %-22s%-18sMISSING (no ACK)\n", addr, e->label,
+				/* No ACK, or lost arbitration: the driver returns -EIO for both */
+				printk("  0x%02x  %-22s%-18sMISSING (no response, -EIO)\n", addr,
+				       e->label, e->compat);
+			} else if (result[addr] == NOT_PROBED) {
+				printk("  0x%02x  %-22s%-18snot probed (scan stopped)\n", addr, e->label,
 				       e->compat);
 			} else {
 				printk("  0x%02x  %-22s%-18sMISSING (error %d)\n", addr, e->label,
@@ -153,8 +201,10 @@ static void scan_bus(const struct i2c_bus *bus)
 		}
 	}
 
+	/* Only the first error is named: the others may differ (see each address above) */
 	if (other_errors > 0) {
-		printk("  %u probes failed with error %d (%s)\n", other_errors, first_other_error,
+		printk("  %u probe%s failed (first error: %d, %s)\n", other_errors,
+		       other_errors == 1 ? "" : "s", first_other_error,
 		       error_meaning(first_other_error));
 	}
 }
