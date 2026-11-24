@@ -1,0 +1,12 @@
+/* COIL_EN stays off until main() turns it on, as in samples/drv8235_diag. */
+&coil_power {
+	/delete-property/ regulator-boot-on;
+};
+
+/* The Board Library has no IMU node yet; same node as boards/cmu/argus/argus.dtsi. */
+&i2c0 {
+	imu: bmx160@68 {
+		compatible = "bosch,bmx160";
+		reg = <0x68>;
+	};
+};

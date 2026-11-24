@@ -26,7 +26,7 @@ enum {
 	RC_CTRL3 = 0x14,
 	EN_OUT = BIT(7),
 	CLR_FLT = BIT(1),
-	NPOR = BIT(1),
+	NPOR = BIT(1), /* 1 after a power-on reset or UVLO until CLR_FLT; 0 in normal use */
 	FAULT = BIT(7),
 	BRIDGE_MASK = 0x03,
 };
@@ -121,7 +121,7 @@ static int clear_faults_locked(const struct device *dev)
 	if (ret != 0) {
 		return ret;
 	}
-	if ((status & NPOR) == 0U) {
+	if ((status & NPOR) != 0U) {
 		data->initialized = false;
 	}
 	ret = coast_locked(dev);
@@ -200,7 +200,7 @@ static int drive(const struct device *dev, enum drv8235_bridge_mode mode, uint8_
 	}
 	ret = read_reg(dev, FAULT_STATUS, &status);
 
-	if (ret == 0 && (status & NPOR) == 0U) {
+	if (ret == 0 && (status & NPOR) != 0U) {
 		data->initialized = false;
 	}
 	if (ret == 0 && !data->initialized) {
@@ -430,7 +430,7 @@ int drv8235_get_faults(const struct device *dev, struct drv8235_faults *faults)
 			.overcurrent = (status & BIT(4)) != 0,
 			.overvoltage = (status & BIT(3)) != 0,
 			.thermal_shutdown = (status & BIT(2)) != 0,
-			.power_on_reset = (status & NPOR) == 0,
+			.power_on_reset = (status & NPOR) != 0,
 		};
 
 		if (reading.power_on_reset) {

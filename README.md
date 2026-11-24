@@ -75,6 +75,7 @@ Hold the boot button while plugging the board in, then drag `zephyr.uf2` onto th
 | `tests/`, `test_vectors/` | Tests |
 | `samples/adm1176_diag/` | ADM1176 telemetry diagnostic and board-test instructions |
 | `samples/drv8235_diag/` | Safe USB-shell diagnostic for all six magnetorquer drivers |
+| `samples/drv8235_mag_hyst/` | C port of `mag_hyst.py`: field sweep of all six coils, and a C/Python log comparison |
 | `samples/bmx160_demo/` | BMX160 IMU readings and hardware checklist |
 
 ## Hardware revisions
