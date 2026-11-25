@@ -129,4 +129,10 @@ void adcs_run(const struct adcs_io *io);
  */
 const struct adcs_io *adcs_console_only_io(void);
 
+/* adcs_console_only_io() with the gyro, magnetometer and gyro range on the BMX160
+ * (devicetree label imu). Light sensors, coils and the satellite state are still
+ * console-only. If the IMU isn't ready, its callbacks return -ENODEV.
+ */
+const struct adcs_io *adcs_hardware_io(void);
+
 #endif
