@@ -1,0 +1,30 @@
+/*
+ * BMX160 nodes for the test, included inside an emulated I2C bus by each
+ * board overlay in boards/. Each node gets both a driver instance and a fake
+ * IMU (src/bmx160_emul.c), matched by compatible.
+ */
+
+/* Configured like the Argus IMU in argus.dtsi */
+imu: bmx160@68 {
+	compatible = "bosch,bmx160";
+	reg = <0x68>;
+};
+
+/* Not initialized at boot, so a test can set up its fake first and then call device_init() */
+imu_bad_id: bmx160@69 {
+	compatible = "bosch,bmx160";
+	reg = <0x69>;
+	zephyr,deferred-init;
+};
+
+imu_err: bmx160@6a {
+	compatible = "bosch,bmx160";
+	reg = <0x6a>;
+	zephyr,deferred-init;
+};
+
+imu_no_trim: bmx160@6b {
+	compatible = "bosch,bmx160";
+	reg = <0x6b>;
+	zephyr,deferred-init;
+};

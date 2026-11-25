@@ -5,18 +5,21 @@ cmake_minimum_required(VERSION 3.20.0)
 set(BOARD argus/rp2350b/m33_0)
 
 list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+list(APPEND DTS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/boards/cmu/argus")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(FSW-Mainboard-C)
 
 target_sources(app PRIVATE
         src/main.c
         src/drivers/adm1176.c
+        src/drivers/bmx160.c
+        src/drivers/battery_heaters.c
         src/drivers/drv8235.c
         src/drivers/max17205.c
         src/drivers/opt4003.c
         src/apps/eps/eps.c
         src/tasks/eps.c
-        src/tasks/eps_runner.c
+        src/tasks/eps_hardware.c
 )
 
 target_include_directories(app PRIVATE

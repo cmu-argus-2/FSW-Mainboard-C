@@ -86,7 +86,7 @@ static void assert_command(uint8_t index, enum drv8235_bridge_mode mode)
 
 ZTEST(drv8235, test_init_matches_original_settings)
 {
-	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x02);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x00);
 	zassert_equal(drv8235_emul_get_reg(emul, 0x09), 0xE0);
 	zassert_equal(drv8235_emul_get_reg(emul, 0x0C), 0x73);
 	zassert_equal(drv8235_emul_get_reg(emul, 0x0D), 0x3C);
@@ -301,16 +301,35 @@ ZTEST(drv8235, test_fault_read_decodes_and_clears)
 	struct drv8235_faults faults;
 
 	zassert_ok(drv8235_set_throttle(dev, 1));
-	drv8235_emul_set_reg(emul, 0x00, 0xBE);
+	drv8235_emul_set_reg(emul, 0x00, 0xBC);
 	zassert_ok(drv8235_get_faults(dev, &faults));
-	zassert_equal(faults.raw, 0xBE);
+	zassert_equal(faults.raw, 0xBC);
 	zassert_true(faults.stall);
 	zassert_true(faults.overcurrent);
 	zassert_true(faults.overvoltage);
 	zassert_true(faults.thermal_shutdown);
 	zassert_false(faults.power_on_reset);
-	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x02);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x00);
 	assert_command(0, DRV8235_BRIDGE_COAST);
+	/* Not a reset: the chip kept its configuration, so it can drive again. */
+	zassert_ok(drv8235_set_throttle(dev, 1));
+}
+
+ZTEST(drv8235, test_npor_set_is_a_reset)
+{
+	struct drv8235_faults faults;
+
+	zassert_ok(drv8235_set_throttle(dev, 1));
+	drv8235_emul_set_reg(emul, 0x00, 0x82);
+	zassert_ok(drv8235_get_faults(dev, &faults));
+	zassert_true(faults.power_on_reset);
+	zassert_false(faults.stall || faults.overcurrent || faults.overvoltage ||
+		      faults.thermal_shutdown);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x00);
+	assert_command(0, DRV8235_BRIDGE_COAST);
+	zassert_equal(drv8235_set_throttle(dev, 1), -EAGAIN);
+	zassert_ok(drv8235_init(dev));
+	zassert_ok(drv8235_set_throttle(dev, 1));
 }
 
 ZTEST(drv8235, test_normal_npor_does_not_report_fault_or_write)
@@ -340,14 +359,14 @@ ZTEST(drv8235, test_reset_requires_init_even_after_clear)
 
 ZTEST(drv8235, test_latched_fault_does_not_gate_setters_or_zero_brake)
 {
-	drv8235_emul_set_reg(emul, 0x00, 0x92);
+	drv8235_emul_set_reg(emul, 0x00, 0x90);
 	zassert_ok(drv8235_set_throttle(dev, 1));
 	assert_command(35, DRV8235_BRIDGE_FORWARD);
 	zassert_ok(drv8235_set_throttle_volts(dev, -3));
 	assert_command(18, DRV8235_BRIDGE_REVERSE);
 	zassert_ok(drv8235_set_throttle_raw(dev, 0));
 	assert_command(0, DRV8235_BRIDGE_BRAKE);
-	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x92);
+	zassert_equal(drv8235_emul_get_reg(emul, 0x00), 0x90);
 	zassert_ok(drv8235_clear_faults(dev));
 	assert_command(0, DRV8235_BRIDGE_COAST);
 	zassert_ok(drv8235_set_throttle(dev, 1));

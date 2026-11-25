@@ -53,6 +53,16 @@
 		regulator-boot-on;
 	};
 
+	/* EPS enables COIL_EN before initializing the six torque drivers.
+	 * The regulator waits for the rail to settle before returning.
+	 */
+	coil_power: coil-power {
+		compatible = "regulator-fixed";
+		regulator-name = "coil_power";
+		enable-gpios = <&gpio0_map 1 GPIO_ACTIVE_HIGH>;
+		off-on-delay-us = <100000>;
+	};
+
 	zephyr,user {
 		periph-pwr-flt-gpios = <&gpio0_map 41 GPIO_ACTIVE_HIGH>;
 
@@ -66,10 +76,6 @@
 		coil-en-gpios = <&gpio0_map 1 GPIO_ACTIVE_HIGH>;
 		rw-en-gpios = <&gpio0_map 31 GPIO_ACTIVE_HIGH>;
 
-		heat-en-gpios = <&gpio0_map 6 GPIO_ACTIVE_HIGH>;
-		heat0-on-gpios = <&gpio0_map 4 GPIO_ACTIVE_HIGH>;
-		heat1-on-gpios = <&gpio0_map 5 GPIO_ACTIVE_HIGH>;
-
 		jetson-en-gpios = <&gpio0_map 7 GPIO_ACTIVE_HIGH>;
 		/* Wired to the 5V DC-DC enable, per argus_v4.py. */
 		jetson-sd-req-gpios = <&gpio0_map 18 GPIO_ACTIVE_HIGH>;
@@ -82,6 +88,14 @@
 		 */
 		wdt-en-gpios = <&gpio0_map 15 GPIO_ACTIVE_HIGH>;
 		wdt-wdi-gpios = <&gpio0_map 2 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* Battery-board heaters. The hogs below hold these low until the driver loads. */
+	battery_heaters: battery-heaters {
+		compatible = "cmu,battery-heaters";
+		heat-en-gpios = <&gpio0_map 6 GPIO_ACTIVE_HIGH>;
+		heat0-on-gpios = <&gpio0_map 4 GPIO_ACTIVE_HIGH>;
+		heat1-on-gpios = <&gpio0_map 5 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -178,6 +192,30 @@ gpio0_lo: &gpio0 {
 	pinctrl-names = "default";
 	status = "okay";
 
+	torque_xm: drv8235@30 {
+		compatible = "ti,drv8235";
+		reg = <0x30>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_ym: drv8235@31 {
+		compatible = "ti,drv8235";
+		reg = <0x31>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_zm: drv8235@33 {
+		compatible = "ti,drv8235";
+		reg = <0x33>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
 	light_xm: opt4003@44 {
 		compatible = "ti,opt4003";
 		reg = <0x44>;
@@ -195,6 +233,12 @@ gpio0_lo: &gpio0 {
 		reg = <0x46>;
 		conversion-time = <0>;
 	};
+
+	/* Address from IMU_I2C_ADDRESS in flight/hal/argus_v4.py. Only SDA/SCL are wired. */
+	imu: bmx160@68 {
+		compatible = "bosch,bmx160";
+		reg = <0x68>;
+	};
 };
 
 &i2c1 {
@@ -202,6 +246,30 @@ gpio0_lo: &gpio0 {
 	pinctrl-0 = <&i2c1_default>;
 	pinctrl-names = "default";
 	status = "okay";
+
+	torque_xp: drv8235@30 {
+		compatible = "ti,drv8235";
+		reg = <0x30>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_yp: drv8235@31 {
+		compatible = "ti,drv8235";
+		reg = <0x31>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
+
+	torque_zp: drv8235@33 {
+		compatible = "ti,drv8235";
+		reg = <0x33>;
+		vm-supply = <&coil_power>;
+		max-output-microvolt = <6000000>;
+		coil-resistance-milliohm = <25000>;
+	};
 
 	main_power_monitor: adm1176@40 {
 		compatible = "adi,adm1176";

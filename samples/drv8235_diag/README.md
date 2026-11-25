@@ -66,7 +66,7 @@ Expected observations:
   Check wiring/power/address, then retry arm without rebooting.
 - Arm: restores chip configuration after power-up, with bridges enabled at target
   zero in coast. It does not deliberately drive a coil.
-- Status: mode=coast and fault=0x02 are normal immediately after arm.
+- Status: mode=coast and fault=0x00 are normal immediately after arm.
 - Pulse: command voltage is in mV and duration in ms. Positive is forward,
   negative is reverse, and zero selects brake. Each pulse ends in coast,
   with EN_OUT still enabled; disarm removes the shared rail power.

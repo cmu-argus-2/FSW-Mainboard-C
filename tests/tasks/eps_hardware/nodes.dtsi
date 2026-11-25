@@ -1,0 +1,43 @@
+main_power_monitor: adm1176@40 {
+	compatible = "adi,adm1176";
+	reg = <0x40>;
+	rshunt-micro-ohms = <10000>;
+};
+gps_power_monitor: adm1176@41 {
+	compatible = "adi,adm1176";
+	reg = <0x41>;
+	rshunt-micro-ohms = <10000>;
+};
+radio_power_monitor: adm1176@42 {
+	compatible = "adi,adm1176";
+	reg = <0x42>;
+	rshunt-micro-ohms = <10000>;
+	zephyr,deferred-init;
+};
+jetson_power_monitor: adm1176@46 {
+	compatible = "adi,adm1176";
+	reg = <0x46>;
+	rshunt-micro-ohms = <10000>;
+};
+fuel_gauge: max17205@36 {
+	compatible = "maxim,max17205";
+	reg = <0x36>;
+	rsense-micro-ohms = <10000>;
+};
+
+/* Distinct test addresses let one emulated controller represent all axes. */
+#define EPS_TEST_COIL(label, node, addr) \
+	label: node { \
+		compatible = "ti,drv8235"; \
+		reg = <addr>; \
+		vm-supply = <&coil_power>; \
+		max-output-microvolt = <6000000>; \
+		coil-resistance-milliohm = <25000>; \
+	};
+
+EPS_TEST_COIL(torque_xp, drv8235@30, 0x30)
+EPS_TEST_COIL(torque_xm, drv8235@31, 0x31)
+EPS_TEST_COIL(torque_yp, drv8235@32, 0x32)
+EPS_TEST_COIL(torque_ym, drv8235@33, 0x33)
+EPS_TEST_COIL(torque_zp, drv8235@34, 0x34)
+EPS_TEST_COIL(torque_zm, drv8235@35, 0x35)

@@ -1,0 +1,26 @@
+# Devicetree binding for the BMX160 (BMI160 accel/gyro + BMM150 magnetometer).
+# Defaults match what flight/hal/drivers/bmx160.py writes at boot.
+
+description: Bosch BMX160 9-axis IMU on I2C
+
+compatible: "bosch,bmx160"
+
+include: [sensor-device.yaml, i2c-device.yaml]
+
+properties:
+  gyro-range:
+    type: int
+    default: 2
+    enum: [0, 1, 2, 3, 4]
+    description: |
+      GYR_RANGE code written at init. Change it at runtime with
+      bmx160_set_gyro_range().
+      0: 2000 deg/s, 1: 1000 deg/s, 2: 500 deg/s, 3: 250 deg/s, 4: 125 deg/s
+
+  accel-range:
+    type: int
+    default: 8
+    enum: [3, 5, 8, 12]
+    description: |
+      ACC_RANGE code written at init.
+      3: 2 g, 5: 4 g, 8: 8 g, 12: 16 g

@@ -1,0 +1,29 @@
+# Copyright (c) 2026 Carnegie Mellon University
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Argus battery-board heaters, switched by GPIO.
+
+  HEAT_EN is a shared master enable. Each heater also has its own on line.
+  A heater draws power only while both HEAT_EN and its own line are high.
+  The second heater is optional, so single-heater boards are supported.
+
+  The driver configures every line as input and output so it can read the
+  pad level back, which device_errors needs. All lines start low.
+
+compatible: "cmu,battery-heaters"
+
+properties:
+  heat-en-gpios:
+    type: phandle-array
+    required: true
+    description: Shared master enable (HEAT_EN), active high.
+
+  heat0-on-gpios:
+    type: phandle-array
+    required: true
+    description: Heater 0 enable (HEAT0_ON), active high.
+
+  heat1-on-gpios:
+    type: phandle-array
+    description: Heater 1 enable (HEAT1_ON), active high. Omit on single-heater boards.

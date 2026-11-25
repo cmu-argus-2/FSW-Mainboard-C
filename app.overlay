@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* The ADC driver requires a default state. Die temperature uses no external pins. */
+&pinctrl {
+	eps_adc_default: eps-adc-default {};
+};
+
+&adc {
+	pinctrl-0 = <&eps_adc_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/* U13 is supplied by the LoRa rail. Initialize it after EPS enables the rail. */
+&radio_power_monitor {
+	zephyr,deferred-init;
+};
