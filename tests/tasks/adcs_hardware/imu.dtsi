@@ -1,0 +1,5 @@
+/* Configured like the Argus IMU in argus.dtsi */
+imu: bmx160@68 {
+	compatible = "bosch,bmx160";
+	reg = <0x68>;
+};
