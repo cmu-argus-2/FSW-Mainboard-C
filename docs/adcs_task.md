@@ -17,8 +17,16 @@ the coils and cut COIL_EN, which is restored before the next control cycle.
 
 The control laws, sun vector, coil allocator and mode logic are pure functions
 in `src/apps/adcs`. The task and its runner are in `src/tasks`. Hardware
-integration supplies driver-backed callbacks through `adcs_io`. The default
-runner uses console-only callbacks that report every device as unavailable.
+integration supplies driver-backed callbacks through `adcs_io`.
+
+`adcs_hardware_io()` (`src/tasks/adcs_hardware.c`), which the app uses, reads the gyro,
+magnetometer and gyro range from the BMX160 driver (devicetree label `imu`). The
+magnetometer is converted from the driver's gauss to uT, as Python `IMU.mag()`
+returns. The gyro range write waits until the next sample is in the new range (see
+`include/argus/drivers/bmx160.h`). If the IMU isn't ready, its callbacks fail, like
+Python with `IMU_AVAILABLE` false. The light sensors, coils and satellite state still
+come from `adcs_console_only_io()`, which reports those devices as unavailable and
+fixes the state at DETUMBLING.
 
 ## Record
 
@@ -52,6 +60,8 @@ means the field holds a measurement. A clear bit marks a zero placeholder.
 
 `tests/tasks/adcs` checks the algorithms against vectors generated from the
 Python flight software, and the task against fake hardware and a fake clock.
+`tests/tasks/adcs_hardware` runs the IMU callbacks and one task step with the real
+BMX160 driver against the fake IMU from `tests/drivers/bmx160`.
 Regenerate the vectors with a Python environment that has numpy:
 
 ```sh
