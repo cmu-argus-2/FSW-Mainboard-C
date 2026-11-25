@@ -23,9 +23,9 @@ int main(void)
 {
 	printk("Argus FSW mainboard rev %s (%s)\n", CONFIG_BOARD_REVISION, ARGUS_GIT_VERSION);
 	printk("EPS 1 Hz; time is uptime seconds; full record every fifth run\n");
-	printk("ADCS console-only: state fixed at DETUMBLING; no sensors or coils connected\n");
+	printk("ADCS: IMU connected; state fixed at DETUMBLING; no light sensors or coils\n");
 	k_thread_create(&adcs_thread, adcs_stack, K_THREAD_STACK_SIZEOF(adcs_stack), adcs_entry,
-			(void *)adcs_console_only_io(), NULL, NULL, ADCS_PRIORITY, 0, K_NO_WAIT);
+			(void *)adcs_hardware_io(), NULL, NULL, ADCS_PRIORITY, 0, K_NO_WAIT);
 	k_thread_name_set(&adcs_thread, "adcs");
 	eps_start(eps_hardware_io());
 	return 0;
